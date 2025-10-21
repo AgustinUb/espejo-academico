@@ -1,0 +1,26 @@
+{
+  "alumno_nombre": "Juan Pérez",
+  "alumno_email": "juan@ucv.cl",
+  "respuestas": [
+    { "pregunta_id": "P1", "marcada": "A" },
+    { "pregunta_id": "P2", "marcada": "B" },
+    { "pregunta_id": "P3", "marcada": "C" },
+    { "pregunta_id": "P4", "marcada": "D" },
+    { "pregunta_id": "P5", "marcada": "A" },
+    { "pregunta_id": "P6", "marcada": "B" },
+    { "pregunta_id": "P7", "marcada": "C" },
+    { "pregunta_id": "P8", "marcada": "D" },
+    { "pregunta_id": "P9", "marcada": "A" },
+    { "pregunta_id": "P10", "marcada": "B" },
+    { "pregunta_id": "P11", "marcada": "C" },
+    { "pregunta_id": "P12", "marcada": "D" },
+    { "pregunta_id": "P13", "marcada": "A" },
+    { "pregunta_id": "P14", "marcada": "B" },
+    { "pregunta_id": "P15", "marcada": "C" },
+    { "pregunta_id": "P16", "marcada": "D" },
+    { "pregunta_id": "P17", "marcada": "A" },
+    { "pregunta_id": "P18", "marcada": "B" },
+    { "pregunta_id": "P19", "marcada": "C" },
+    { "pregunta_id": "P20", "marcada": "D" }
+  ]
+}
