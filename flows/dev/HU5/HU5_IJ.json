@@ -1,0 +1,433 @@
+{
+  "name": "HU5_IJ",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "/evaluaciones/ingreso",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -2848,
+        208
+      ],
+      "id": "8990271a-6aeb-40f9-b5db-c68d0185e148",
+      "name": "API_Webhook_Recepcion - HU1",
+      "webhookId": "de02325f-6718-49c7-bd8a-4592b2c260c7"
+    },
+    {
+      "parameters": {
+        "jsCode": "// MAP_LogRecepcion — HU1 (robusto)\n// Lee payload desde $json, $json.body, $json.query o $json.formData\n// Parsea \"respuestas\" si viene como string. No muta el payload original.\n\nfunction pickPayload(src) {\n  if (!src || typeof src !== 'object') return {};\n  if (src.alumno_nombre || src.alumno_email || src.respuestas) return src;\n  if (src.body && (src.body.alumno_nombre || src.body.alumno_email || src.body.respuestas)) return src.body;\n  if (src.query && (src.query.alumno_nombre || src.query.alumno_email || src.query.respuestas)) return src.query;\n  if (src.formData && (src.formData.alumno_nombre || src.formData.alumno_email || src.formData.respuestas)) return src.formData;\n  return src;\n}\n\nfunction asArrayMaybeParsed(val) {\n  if (Array.isArray(val)) return val;\n  if (typeof val === 'string') {\n    try { const parsed = JSON.parse(val); return Array.isArray(parsed) ? parsed : []; }\n    catch { return []; }\n  }\n  return [];\n}\n\nfunction maskName(n) {\n  if (!n) return \"AlumnoXX\";\n  const p = String(n).trim().split(\" \")[0] || \"Alumno\";\n  return p + \"XX\";\n}\n\nfunction maskEmail(e) {\n  const s = String(e||\"\").trim();\n  if (!s.includes(\"@\")) return \"anon@masked\";\n  const [u, d] = s.split(\"@\");\n  const mu = u.length <= 2 ? u[0] + \"*\" : u[0] + \"*\".repeat(Math.max(1, u.length - 2)) + u.slice(-1);\n  return `${mu}@${d}`;\n}\n\nconst raw = $json || {};\nconst payload = pickPayload(raw);\n\nconst nombre = String(payload.alumno_nombre || \"\").trim();\nconst email  = String(payload.alumno_email  || \"\").trim();\nconst respuestas = asArrayMaybeParsed(payload.respuestas);\n\nconst omitidas_ids = [];\nfor (const r of respuestas) {\n  const marcada = (r && typeof r.marcada !== 'undefined') ? String(r.marcada).trim() : \"\";\n  if (marcada === \"\") omitidas_ids.push(String(r.pregunta_id || \"\").toUpperCase());\n}\n\nconst logEntry = {\n  status: \"recepcion_ok\",\n  alumno: maskName(nombre),\n  email: maskEmail(email),\n  respuestas_count: respuestas.length,\n  omitidas_count: omitidas_ids.length,\n  omitidas_ids,\n  keys_detectadas: Object.keys(payload),\n  at: new Date().toISOString()\n};\n\n// Consola (si usas Executions lo verás) + embebido para evidencias\nconsole.log(\"[HU1] Recepción payload\", logEntry);\n\nreturn [{\n  json: {\n    ...raw,                // NO tocamos el payload real del webhook\n    __log_masked: logEntry // Resumen seguro para ver en Output\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2512,
+        336
+      ],
+      "id": "d6deb8a4-bc86-497b-b776-c072ba392bde",
+      "name": "MAP_LogRecepcion - HU1"
+    },
+    {
+      "parameters": {
+        "jsCode": "// HU2 - Normalize & Validate (robusto)\n// Soporta payload en: $json, $json.body, $json.query, $json.formData\n// Parsea respuestas si vienen como string. Normaliza keys y valores.\n\nfunction isEmail(e) {\n  return /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(String(e||\"\").trim());\n}\n\nfunction normalizeKeys(obj) {\n  const out = {};\n  for (const k of Object.keys(obj || {})) {\n    out[k.trim().toLowerCase()] = obj[k];\n  }\n  return out;\n}\n\nfunction pickPayload(src) {\n  // intenta distintas fuentes comunes del Webhook\n  if (src && (src.alumno_nombre || src.respuestas || src.alumno_email)) return src;\n  if (src?.body && (src.body.alumno_nombre || src.body.respuestas || src.body.alumno_email)) return src.body;\n  if (src?.query && (src.query.alumno_nombre || src.query.respuestas || src.query.alumno_email)) return src.query;\n  if (src?.formData && (src.formData.alumno_nombre || src.formData.respuestas || src.formData.alumno_email)) return src.formData;\n  return src || {};\n}\n\nconst raw = $json || {};\nlet payload = pickPayload(raw);\npayload = normalizeKeys(payload);\n\n// Asegurar que \"respuestas\" sea un array\nlet respuestas = payload.respuestas;\nif (typeof respuestas === 'string') {\n  try { respuestas = JSON.parse(respuestas); } catch (e) { respuestas = []; }\n}\nif (!Array.isArray(respuestas)) respuestas = [];\n\n// Extraer campos (después de normalizar keys)\nconst nombre = String(payload.alumno_nombre || \"\").trim();\nconst email  = String(payload.alumno_email  || \"\").trim();\n\n// Validación\nif (!nombre || !isEmail(email)) {\n  return [{\n    json: {\n      error: {\n        code: \"VALIDATION_ERROR\",\n        message: \"Faltan datos del alumno (nombre/email) o email inválido.\",\n        details: { alumno_nombre: !!nombre, alumno_email: isEmail(email) }\n      },\n      _meta: { valid: false, source_hint: Object.keys(raw) }\n    }\n  }];\n}\n\n// Normalizar respuestas: IDs y alternativas a MAYÚSCULAS, vacías => NO_RESPONDIDA\nconst respNorm = respuestas.map(r => {\n  const obj = normalizeKeys(r || {});\n  const id = String(obj.pregunta_id || \"\").trim().toUpperCase();\n  const marcadaRaw = String(obj.marcada ?? \"\").trim().toUpperCase();\n  const marcada = marcadaRaw === \"\" ? \"NO_RESPONDIDA\" : marcadaRaw;\n  return { pregunta_id: id, marcada };\n});\n\n// Log seguro (anonimizado)\nconsole.log(\"[HU2] Normalize OK\", {\n  email_mask: email.replace(/(.).+(@.*)/, \"$1***$2\"),\n  total: respNorm.length\n});\n\n// Salida limpia y estandarizada\nreturn [{\n  json: {\n    alumno_nombre: nombre.toUpperCase(),\n    alumno_email: email.toLowerCase(),\n    respuestas: respNorm,\n    _meta: { valid: true }\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2192,
+        336
+      ],
+      "id": "f9fd1a7b-b442-4e1a-ad01-e7487f6531b0",
+      "name": "CTRL_NormalizePayload - HU2"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        -1456,
+        416
+      ],
+      "id": "77ade6b2-aed2-4f8e-8910-b397dbf9edf3",
+      "name": "OUT_RespondWebhook_Error_HU2",
+      "notesInFlow": false,
+      "notes": "error 400"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "7a07cdac-dbcf-40a9-9c56-b1cc9fbc0a53",
+              "leftValue": "={{ $json._meta.valid }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -1792,
+        336
+      ],
+      "id": "f1161bde-6aa8-4efd-9e2d-0fea9d836c07",
+      "name": "CTRL_Guard__Valid - HU2"
+    },
+    {
+      "parameters": {
+        "jsCode": "// HU3 - MAP_LogBK: Lectura BK con advertencia y trace (robusto ante huecos)\nconst startedAt = Date.now();\n\nconst rowsRaw = $items().map(i => i.json || {});\n\n// Filtra: descarta objetos vacíos y filas sin pregunta_id útil\nconst rows = rowsRaw.filter(r => {\n  const hasKeys = Object.keys(r).length > 0;\n  const pid = String(r.pregunta_id || \"\").trim();\n  return hasKeys && pid !== \"\";\n});\n\nconst baseTrace = Array.isArray($json?.__trace) ? $json.__trace : [];\nconst traceNote = (msg, extra = {}) => ({\n  step: \"HU3\",\n  msg,\n  at: new Date().toISOString(),\n  ...extra\n});\n\nconsole.log(\"[HU3] BK filas (raw/útiles):\", rowsRaw.length, \"/\", rows.length);\n\n// Si no hay filas útiles: advertencia base_vacia\nif (!rows.length) {\n  const elapsed = Date.now() - startedAt;\n  const trace = baseTrace.concat(\n    traceNote(\"base_vacia\", { rows: 0, time_ms: elapsed })\n  );\n  return [{\n    json: {\n      bk: [],\n      advertencia: \"base_vacia\",\n      warning: \"Base de conocimiento vacía (o sin pregunta_id).\",\n      _meta: { rows: 0, time_ms: elapsed },\n      __trace: trace\n    }\n  }];\n}\n\n// Si hay filas, emite cada una. Al primer item adjunta trace.\nconst total = rows.length;\nreturn rows.map((r, idx) => {\n  const out = { ...r };\n  if (idx === 0) {\n    const elapsed = Date.now() - startedAt;\n    out.__trace = baseTrace.concat(\n      traceNote(\"bk_ok\", { rows: total, time_ms: elapsed })\n    );\n  }\n  return { json: out };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1920,
+        80
+      ],
+      "id": "c80790e1-9b51-49dd-b538-895cc3fd6a3e",
+      "name": "MAP_LogBK - HU3"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "https://docs.google.com/spreadsheets/d/1rltXhfv8FAglbyUCNvp69m6rnBbYDVVtYigeokyUTqo/edit?gid=317269312#gid=317269312",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 317269312,
+          "mode": "list",
+          "cachedResultName": "BK_Preguntas__base_de_conocimiento_.csv",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1rltXhfv8FAglbyUCNvp69m6rnBbYDVVtYigeokyUTqo/edit#gid=317269312"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -2512,
+        80
+      ],
+      "id": "246d775e-13df-4aff-abe0-079942c08998",
+      "name": "API_Sheets_BK_Read - HU3",
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "iwNKaruhxq5vwA4z",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -1488,
+        96
+      ],
+      "id": "9cf979b9-996d-4506-bdf6-ff6e7d6e4a95",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "jsCode": "const t = $json.totales || {};\nconsole.log(\"[HU4] Totales\", t);\nreturn [{ json: $json }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -912,
+        96
+      ],
+      "id": "918ff958-4266-4f1a-987f-7cf0771760b1",
+      "name": "MAP_LogComparar - HU4"
+    },
+    {
+      "parameters": {
+        "jsCode": "// HU4 - Comparar Respuestas (robusto)\n// REQUIERE: \"Run Once for All Items\" = ON\n\n// --- Debug snapshot (déjalo mientras depuras) ---\nconst dbg = $input.all().map((i, idx) => ({ idx, keys: Object.keys(i.json) }));\nconsole.log(\"[HU4] inputs snapshot:\", dbg);\n// -----------------------------------------------\n\nfunction flatAllInputs() {\n  const arr = $input.all().map(i => i.json);\n  const out = [];\n  for (const x of arr) {\n    if (Array.isArray(x)) out.push(...x);\n    else out.push(x);\n  }\n  return out;\n}\n\nfunction tryExtractPayload(obj) {\n  if (!obj || typeof obj !== 'object') return null;\n  const candidates = [obj, obj.body, obj.query, obj.formData].filter(Boolean);\n  for (const c of candidates) {\n    if (Array.isArray(c.respuestas) && (c.alumno_email || c.alumno_nombre)) return c;\n  }\n  return null;\n}\n\n// 1) Reunir todo\nconst all = flatAllInputs();\n\n// 2) Separar payload vs BK\nlet payload = null;\nconst bkRows = [];\n\nfor (const item of all) {\n  if (item && typeof item.pregunta_id === 'string') {\n    bkRows.push(item);\n    continue;\n  }\n  const candidate = tryExtractPayload(item);\n  if (candidate && !payload) payload = candidate;\n}\n\nif (!payload) {\n  return [{\n    json: {\n      error: \"NO_PAYLOAD\",\n      message: \"No llegó payload normalizado de HU2\",\n      _meta: { step: \"HU4\", inputs: all.length }\n    }\n  }];\n}\n\nif (!bkRows.length) {\n  const desconocidas = (payload.respuestas || []).length;\n  return [{\n    json: {\n      alumno_nombre: payload.alumno_nombre,\n      alumno_email:  payload.alumno_email,\n      totales: {\n        total_preguntas: desconocidas,\n        aciertos: 0, errores: 0, omitidas: 0, desconocidas,\n        total_puntaje: 0, puntaje_obtenido: 0\n      },\n      desglose: (payload.respuestas || []).map(r => ({\n        pregunta_id: String(r.pregunta_id||\"\").toUpperCase(),\n        marcada: String(r.marcada||\"\").toUpperCase(),\n        estado: \"PREGUNTA_NO_ENCONTRADA\",\n        correcta: null, puntaje: 0, explicacion: \"Sin BK\"\n      })),\n      warning: \"BK vacía o no disponible\"\n    }\n  }];\n}\n\n// 3) Mapa BK\nconst bkMap = new Map();\nfor (const row of bkRows) {\n  const id = String(row.pregunta_id || \"\").trim().toUpperCase();\n  const correcta = String(row.correcta || \"\").trim().toUpperCase();\n  const explicacion = String(row.explicacion || \"\").trim();\n  const puntaje = Number(row.puntaje ?? 1);\n  if (id) bkMap.set(id, { correcta, explicacion, puntaje: isNaN(puntaje) ? 1 : puntaje });\n}\n\n// 4) Comparación\nlet aciertos = 0, errores = 0, omitidas = 0, desconocidas = 0;\nlet total_puntaje = 0, puntaje_obtenido = 0;\nconst desglose = [];\n\nconst respuestas = Array.isArray(payload.respuestas) ? payload.respuestas : [];\nfor (const r of respuestas) {\n  const id = String(r.pregunta_id || \"\").toUpperCase();\n  const marcada = String(r.marcada || \"\").toUpperCase();\n\n  if (!bkMap.has(id)) {\n    desconocidas++;\n    desglose.push({\n      pregunta_id: id, marcada,\n      estado: \"PREGUNTA_NO_ENCONTRADA\",\n      correcta: null, explicacion: \"Pregunta no existe en BK\",\n      puntaje: 0\n    });\n    continue;\n  }\n\n  const { correcta, explicacion, puntaje } = bkMap.get(id);\n  total_puntaje += puntaje;\n\n  if (marcada === \"NO_RESPONDIDA\") {\n    omitidas++;\n    desglose.push({ pregunta_id: id, marcada, estado: \"NO_RESPONDIDA\", correcta, explicacion, puntaje });\n    continue;\n  }\n\n  const esCorrecta = (marcada === correcta);\n  if (esCorrecta) { aciertos++; puntaje_obtenido += puntaje; }\n  else { errores++; }\n\n  desglose.push({\n    pregunta_id: id, marcada, correcta,\n    es_correcta: esCorrecta,\n    estado: esCorrecta ? \"CORRECTA\" : \"INCORRECTA\",\n    explicacion, puntaje\n  });\n}\n\nconst total_preguntas = respuestas.length;\n\nconsole.log(\"[HU4] Comparación OK\", {\n  total_preguntas, aciertos, errores, omitidas, desconocidas,\n  total_puntaje, puntaje_obtenido\n});\n\nreturn [{\n  json: {\n    alumno_nombre: payload.alumno_nombre,\n    alumno_email:  payload.alumno_email,\n    totales: { total_preguntas, aciertos, errores, omitidas, desconocidas, total_puntaje, puntaje_obtenido },\n    desglose\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1216,
+        96
+      ],
+      "id": "7889b128-3c38-4fc2-8695-0b91ee417a68",
+      "name": "CTRL_CompararRespuestas - HU4",
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "jsCode": "// HU5 - Cálculo de nota ponderada + validaciones negativas\n// Entrada esperada (desde HU4):\n// { alumno_nombre, alumno_email,\n//   totales: { total_preguntas, aciertos, errores, omitidas, desconocidas, total_puntaje, puntaje_obtenido },\n//   desglose: [...],\n//   __trace?: [] }\n\nconst inJson = $json || {};\nconst trace = Array.isArray(inJson.__trace) ? inJson.__trace : [];\n\nconst tot = inJson.totales || {};\nconst obtenido = Number(tot.puntaje_obtenido || 0);\nconst total    = Number(tot.total_puntaje || 0);\nconst totalPreg = Number(tot.total_preguntas || 0);\nconst omitidas  = Number(tot.omitidas || 0);\n\n// ❌ CA3 – Puntaje inválido: total_puntaje = 0\nif (!Number.isFinite(total) || total <= 0) {\n  const err = { code: \"puntaje_invalido\", message: \"Total de puntaje = 0. Nota incalculable.\" };\n  trace.push({ step: \"HU5\", msg: \"puntaje_invalido\", at: new Date().toISOString(), details: { total } });\n  return [{ json: { ...inJson, error: err, _meta: { step: \"HU5\" }, __trace: trace } }];\n}\n\n// ❌ NUEVO: CAx – Sin respuestas: todas fueron NO_RESPONDIDA\nconst allOmitidas = totalPreg > 0 && omitidas === totalPreg;\nif (allOmitidas) {\n  const err = { code: \"sin_respuestas\", message: \"Todas las preguntas fueron omitidas. Nota incalculable.\" };\n  trace.push({ step: \"HU5\", msg: \"sin_respuestas\", at: new Date().toISOString(), details: { totalPreg, omitidas } });\n  return [{ json: { ...inJson, error: err, _meta: { step: \"HU5\" }, __trace: trace } }];\n}\n\n// ✅ Cálculo normal\nconst porcentaje = (obtenido / total) * 100;\nconst notaRaw = 1 + 6 * (porcentaje / 100);\nconst nota = Math.round(notaRaw * 10) / 10;\nconst aprobado = porcentaje >= 60;\nconst porcentaje1d = Math.round(porcentaje * 10) / 10;\n\nconst resultado = {\n  alumno_nombre: inJson.alumno_nombre,\n  alumno_email:  inJson.alumno_email,\n  porcentaje: porcentaje1d,\n  nota,\n  aprobado,\n  mensaje: aprobado ? \"Aprobado (≥60%)\" : \"Reprobado (<60%)\",\n  puntaje: { obtenido, total },\n};\n\ntrace.push({ step: \"HU5\", msg: \"resultado_ok\", at: new Date().toISOString(), resultado });\n\nreturn [{ json: { ...inJson, resultado, __trace: trace } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -592,
+        96
+      ],
+      "id": "6aac2836-357d-42d1-ac80-fb92cd301bce",
+      "name": "CTRL_CalcularNota - HU5"
+    },
+    {
+      "parameters": {
+        "jsCode": "const r = $json.resultado || {};\nconsole.log(\"[HU5] OUT_Resultado\", r);\nreturn [{ json: $json }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -208,
+        288
+      ],
+      "id": "0cce0d5d-1186-4b7a-a6f5-f9ae93118c2a",
+      "name": "MAP_LogResultado - HU5"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        32,
+        288
+      ],
+      "id": "fd8e13bd-6290-4ac1-8aec-e78d34768293",
+      "name": "OUT_RespondWebhook - HU5"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "ef519eea-ded9-4a8b-a7d9-521d11cfcfa9",
+              "leftValue": "={{$json[\"error\"] && ($json[\"error\"][\"code\"] === \"puntaje_invalido\" || $json[\"error\"][\"code\"] === \"sin_respuestas\") }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -352,
+        96
+      ],
+      "id": "55903f30-cabc-4b8f-8188-b3bdbb91d197",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "=  \"estado\": \"rechazado\",\n  \"motivo\": \"sin_respuestas\",\n  \"Error\": \"No se puede calcular la nota: todas las preguntas fueron omitidas.\"",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        0
+      ],
+      "id": "918763ec-b667-4661-be0f-a1d7cc0b28b7",
+      "name": "OUT_RespondWebhook_Error_HU5"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "API_Webhook_Recepcion - HU1": {
+      "main": [
+        [
+          {
+            "node": "MAP_LogRecepcion - HU1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "API_Sheets_BK_Read - HU3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MAP_LogRecepcion - HU1": {
+      "main": [
+        [
+          {
+            "node": "CTRL_NormalizePayload - HU2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CTRL_NormalizePayload - HU2": {
+      "main": [
+        [
+          {
+            "node": "CTRL_Guard__Valid - HU2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CTRL_Guard__Valid - HU2": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ],
+        [
+          {
+            "node": "OUT_RespondWebhook_Error_HU2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "API_Sheets_BK_Read - HU3": {
+      "main": [
+        [
+          {
+            "node": "MAP_LogBK - HU3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MAP_LogBK - HU3": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "CTRL_CompararRespuestas - HU4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MAP_LogComparar - HU4": {
+      "main": [
+        [
+          {
+            "node": "CTRL_CalcularNota - HU5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CTRL_CompararRespuestas - HU4": {
+      "main": [
+        [
+          {
+            "node": "MAP_LogComparar - HU4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MAP_LogResultado - HU5": {
+      "main": [
+        [
+          {
+            "node": "OUT_RespondWebhook - HU5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CTRL_CalcularNota - HU5": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "OUT_RespondWebhook_Error_HU5",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "MAP_LogResultado - HU5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "9c9d98f6-3c3f-4910-a6e1-6bd4e32e1100",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "53afd624c5ec95eb294bc3b7554c041af9afad1dc675549209a745cc90fe1c9e"
+  },
+  "id": "ewhmzaHXnrR9vhVq",
+  "tags": []
+}

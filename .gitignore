@@ -1,0 +1,8 @@
+.env
+.n8n/
+node_modules/
+*.log
+*.zip
+*.tmp
+*.bak
+
