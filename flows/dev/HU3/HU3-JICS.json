@@ -1,0 +1,251 @@
+{
+  "name": "HU3-JICS",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "/evaluaciones/ingreso",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -4144,
+        416
+      ],
+      "id": "1af4bac9-1c36-42a3-a40d-ee2fdb98b701",
+      "name": "API_Webhook_Recepcion - HU1",
+      "webhookId": "de02325f-6718-49c7-bd8a-4592b2c260c7"
+    },
+    {
+      "parameters": {
+        "jsCode": "// MAP_LogRecepcion — HU1 (robusto)\n// Lee payload desde $json, $json.body, $json.query o $json.formData\n// Parsea \"respuestas\" si viene como string. No muta el payload original.\n\nfunction pickPayload(src) {\n  if (!src || typeof src !== 'object') return {};\n  if (src.alumno_nombre || src.alumno_email || src.respuestas) return src;\n  if (src.body && (src.body.alumno_nombre || src.body.alumno_email || src.body.respuestas)) return src.body;\n  if (src.query && (src.query.alumno_nombre || src.query.alumno_email || src.query.respuestas)) return src.query;\n  if (src.formData && (src.formData.alumno_nombre || src.formData.alumno_email || src.formData.respuestas)) return src.formData;\n  return src;\n}\n\nfunction asArrayMaybeParsed(val) {\n  if (Array.isArray(val)) return val;\n  if (typeof val === 'string') {\n    try { const parsed = JSON.parse(val); return Array.isArray(parsed) ? parsed : []; }\n    catch { return []; }\n  }\n  return [];\n}\n\nfunction maskName(n) {\n  if (!n) return \"AlumnoXX\";\n  const p = String(n).trim().split(\" \")[0] || \"Alumno\";\n  return p + \"XX\";\n}\n\nfunction maskEmail(e) {\n  const s = String(e||\"\").trim();\n  if (!s.includes(\"@\")) return \"anon@masked\";\n  const [u, d] = s.split(\"@\");\n  const mu = u.length <= 2 ? u[0] + \"*\" : u[0] + \"*\".repeat(Math.max(1, u.length - 2)) + u.slice(-1);\n  return `${mu}@${d}`;\n}\n\nconst raw = $json || {};\nconst payload = pickPayload(raw);\n\nconst nombre = String(payload.alumno_nombre || \"\").trim();\nconst email  = String(payload.alumno_email  || \"\").trim();\nconst respuestas = asArrayMaybeParsed(payload.respuestas);\n\nconst omitidas_ids = [];\nfor (const r of respuestas) {\n  const marcada = (r && typeof r.marcada !== 'undefined') ? String(r.marcada).trim() : \"\";\n  if (marcada === \"\") omitidas_ids.push(String(r.pregunta_id || \"\").toUpperCase());\n}\n\nconst logEntry = {\n  status: \"recepcion_ok\",\n  alumno: maskName(nombre),\n  email: maskEmail(email),\n  respuestas_count: respuestas.length,\n  omitidas_count: omitidas_ids.length,\n  omitidas_ids,\n  keys_detectadas: Object.keys(payload),\n  at: new Date().toISOString()\n};\n\n// Consola (si usas Executions lo verás) + embebido para evidencias\nconsole.log(\"[HU1] Recepción payload\", logEntry);\n\nreturn [{\n  json: {\n    ...raw,                // NO tocamos el payload real del webhook\n    __log_masked: logEntry // Resumen seguro para ver en Output\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3920,
+        512
+      ],
+      "id": "587da28f-da05-471f-9456-606dc75f872c",
+      "name": "MAP_LogRecepcion - HU1"
+    },
+    {
+      "parameters": {
+        "jsCode": "// HU2 - Normalize & Validate (robusto)\n// Soporta payload en: $json, $json.body, $json.query, $json.formData\n// Parsea respuestas si vienen como string. Normaliza keys y valores.\n\nfunction isEmail(e) {\n  return /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(String(e||\"\").trim());\n}\n\nfunction normalizeKeys(obj) {\n  const out = {};\n  for (const k of Object.keys(obj || {})) {\n    out[k.trim().toLowerCase()] = obj[k];\n  }\n  return out;\n}\n\nfunction pickPayload(src) {\n  // intenta distintas fuentes comunes del Webhook\n  if (src && (src.alumno_nombre || src.respuestas || src.alumno_email)) return src;\n  if (src?.body && (src.body.alumno_nombre || src.body.respuestas || src.body.alumno_email)) return src.body;\n  if (src?.query && (src.query.alumno_nombre || src.query.respuestas || src.query.alumno_email)) return src.query;\n  if (src?.formData && (src.formData.alumno_nombre || src.formData.respuestas || src.formData.alumno_email)) return src.formData;\n  return src || {};\n}\n\nconst raw = $json || {};\nlet payload = pickPayload(raw);\npayload = normalizeKeys(payload);\n\n// Asegurar que \"respuestas\" sea un array\nlet respuestas = payload.respuestas;\nif (typeof respuestas === 'string') {\n  try { respuestas = JSON.parse(respuestas); } catch (e) { respuestas = []; }\n}\nif (!Array.isArray(respuestas)) respuestas = [];\n\n// Extraer campos (después de normalizar keys)\nconst nombre = String(payload.alumno_nombre || \"\").trim();\nconst email  = String(payload.alumno_email  || \"\").trim();\n\n// Validación\nif (!nombre || !isEmail(email)) {\n  return [{\n    json: {\n      error: {\n        code: \"VALIDATION_ERROR\",\n        message: \"Faltan datos del alumno (nombre/email) o email inválido.\",\n        details: { alumno_nombre: !!nombre, alumno_email: isEmail(email) }\n      },\n      _meta: { valid: false, source_hint: Object.keys(raw) }\n    }\n  }];\n}\n\n// Normalizar respuestas: IDs y alternativas a MAYÚSCULAS, vacías => NO_RESPONDIDA\nconst respNorm = respuestas.map(r => {\n  const obj = normalizeKeys(r || {});\n  const id = String(obj.pregunta_id || \"\").trim().toUpperCase();\n  const marcadaRaw = String(obj.marcada ?? \"\").trim().toUpperCase();\n  const marcada = marcadaRaw === \"\" ? \"NO_RESPONDIDA\" : marcadaRaw;\n  return { pregunta_id: id, marcada };\n});\n\n// Log seguro (anonimizado)\nconsole.log(\"[HU2] Normalize OK\", {\n  email_mask: email.replace(/(.).+(@.*)/, \"$1***$2\"),\n  total: respNorm.length\n});\n\n// Salida limpia y estandarizada\nreturn [{\n  json: {\n    alumno_nombre: nombre.toUpperCase(),\n    alumno_email: email.toLowerCase(),\n    respuestas: respNorm,\n    _meta: { valid: true }\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3696,
+        512
+      ],
+      "id": "955e750c-2807-4f91-9afa-bb089791f586",
+      "name": "CTRL_NormalizePayload - HU2"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -3248,
+        320
+      ],
+      "id": "046641d1-e852-48b5-ac80-02a34d2b6345",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        -3248,
+        560
+      ],
+      "id": "5e901998-7dfb-405a-9402-1e8083693ae6",
+      "name": "OUT_RespondWebhook_Error_HU2",
+      "notesInFlow": false,
+      "notes": "error 400"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "7a07cdac-dbcf-40a9-9c56-b1cc9fbc0a53",
+              "leftValue": "={{ $json._meta.valid }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -3472,
+        512
+      ],
+      "id": "093de38b-6d59-486e-931b-41c490947b3b",
+      "name": "CTRL_Guard__Valid - HU2"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "mode": "url",
+          "value": "https://docs.google.com/spreadsheets/d/1rltXhfv8FAglbyUCNvp69m6rnBbYDVVtYigeokyUTqo/edit?usp=drivesdk",
+          "__regex": "https:\\/\\/(?:drive|docs)\\.google\\.com(?:\\/.*|)\\/d\\/([0-9a-zA-Z\\-_]+)(?:\\/.*|)"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 317269312,
+          "mode": "list",
+          "cachedResultName": "BK_Preguntas__base_de_conocimiento_.csv",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1rltXhfv8FAglbyUCNvp69m6rnBbYDVVtYigeokyUTqo/edit#gid=317269312"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -3696,
+        272
+      ],
+      "id": "d74c91ee-7c00-400d-98a0-5187e45f5810",
+      "name": "API_Sheets_BK_Read - HU",
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "ZWtVsfgfS795VkAr",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// HU3 - MAP_LogBK: Lectura BK con advertencia y trace (robusto ante huecos)\nconst startedAt = Date.now();\n\nconst rowsRaw = $items().map(i => i.json || {});\n\n// Filtra: descarta objetos vacíos y filas sin pregunta_id útil\nconst rows = rowsRaw.filter(r => {\n  const hasKeys = Object.keys(r).length > 0;\n  const pid = String(r.pregunta_id || \"\").trim();\n  return hasKeys && pid !== \"\";\n});\n\nconst baseTrace = Array.isArray($json?.__trace) ? $json.__trace : [];\nconst traceNote = (msg, extra = {}) => ({\n  step: \"HU3\",\n  msg,\n  at: new Date().toISOString(),\n  ...extra\n});\n\nconsole.log(\"[HU3] BK filas (raw/útiles):\", rowsRaw.length, \"/\", rows.length);\n\n// Si no hay filas útiles: advertencia base_vacia\nif (!rows.length) {\n  const elapsed = Date.now() - startedAt;\n  const trace = baseTrace.concat(\n    traceNote(\"base_vacia\", { rows: 0, time_ms: elapsed })\n  );\n  return [{\n    json: {\n      bk: [],\n      advertencia: \"base_vacia\",\n      warning: \"Base de conocimiento vacía (o sin pregunta_id).\",\n      _meta: { rows: 0, time_ms: elapsed },\n      __trace: trace\n    }\n  }];\n}\n\n// Si hay filas, emite cada una. Al primer item adjunta trace.\nconst total = rows.length;\nreturn rows.map((r, idx) => {\n  const out = { ...r };\n  if (idx === 0) {\n    const elapsed = Date.now() - startedAt;\n    out.__trace = baseTrace.concat(\n      traceNote(\"bk_ok\", { rows: total, time_ms: elapsed })\n    );\n  }\n  return { json: out };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3472,
+        272
+      ],
+      "id": "b4e9d3c3-c495-4e3c-8984-c70ce413b0c9",
+      "name": "MAP_LogBK - HU"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "API_Webhook_Recepcion - HU1": {
+      "main": [
+        [
+          {
+            "node": "MAP_LogRecepcion - HU1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "API_Sheets_BK_Read - HU",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MAP_LogRecepcion - HU1": {
+      "main": [
+        [
+          {
+            "node": "CTRL_NormalizePayload - HU2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CTRL_NormalizePayload - HU2": {
+      "main": [
+        [
+          {
+            "node": "CTRL_Guard__Valid - HU2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        []
+      ]
+    },
+    "CTRL_Guard__Valid - HU2": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ],
+        [
+          {
+            "node": "OUT_RespondWebhook_Error_HU2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "API_Sheets_BK_Read - HU": {
+      "main": [
+        [
+          {
+            "node": "MAP_LogBK - HU",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MAP_LogBK - HU": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "86042d0e-6345-4552-88d7-fc7001395636",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "52020e6536055f243037850b7155c5ca78e4c5d54c959e9719011ec893924076"
+  },
+  "id": "5MPDXmCVkmElNvQ8",
+  "tags": []
+}
