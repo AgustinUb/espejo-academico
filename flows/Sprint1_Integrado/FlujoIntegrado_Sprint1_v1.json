@@ -33,7 +33,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// HU2 - Normalize & Validate (robusto)\n// Soporta payload en: $json, $json.body, $json.query, $json.formData\n// Parsea respuestas si vienen como string. Normaliza keys y valores.\n\nfunction isEmail(e) {\n  return /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(String(e||\"\").trim());\n}\n\nfunction normalizeKeys(obj) {\n  const out = {};\n  for (const k of Object.keys(obj || {})) {\n    out[k.trim().toLowerCase()] = obj[k];\n  }\n  return out;\n}\n\nfunction pickPayload(src) {\n  // intenta distintas fuentes comunes del Webhook\n  if (src && (src.alumno_nombre || src.respuestas || src.alumno_email)) return src;\n  if (src?.body && (src.body.alumno_nombre || src.body.respuestas || src.body.alumno_email)) return src.body;\n  if (src?.query && (src.query.alumno_nombre || src.query.respuestas || src.query.alumno_email)) return src.query;\n  if (src?.formData && (src.formData.alumno_nombre || src.formData.respuestas || src.formData.alumno_email)) return src.formData;\n  return src || {};\n}\n\nconst raw = $json || {};\nlet payload = pickPayload(raw);\npayload = normalizeKeys(payload);\n\n// Asegurar que \"respuestas\" sea un array\nlet respuestas = payload.respuestas;\nif (typeof respuestas === 'string') {\n  try { respuestas = JSON.parse(respuestas); } catch (e) { respuestas = []; }\n}\nif (!Array.isArray(respuestas)) respuestas = [];\n\n// Extraer campos (después de normalizar keys)\nconst nombre = String(payload.alumno_nombre || \"\").trim();\nconst email  = String(payload.alumno_email  || \"\").trim();\n\n// Validación\nif (!nombre || !isEmail(email)) {\n  return [{\n    json: {\n      error: {\n        code: \"VALIDATION_ERROR\",\n        message: \"Faltan datos del alumno (nombre/email) o email inválido.\",\n        details: { alumno_nombre: !!nombre, alumno_email: isEmail(email) }\n      },\n      _meta: { valid: false, source_hint: Object.keys(raw) }\n    }\n  }];\n}\n\n// Normalizar respuestas: IDs y alternativas a MAYÚSCULAS, vacías => NO_RESPONDIDA\nconst respNorm = respuestas.map(r => {\n  const obj = normalizeKeys(r || {});\n  const id = String(obj.pregunta_id || \"\").trim().toUpperCase();\n  const marcadaRaw = String(obj.marcada ?? \"\").trim().toUpperCase();\n  const marcada = marcadaRaw === \"\" ? \"NO_RESPONDIDA\" : marcadaRaw;\n  return { pregunta_id: id, marcada };\n});\n\n// Log seguro (anonimizado)\nconsole.log(\"[HU2] Normalize OK\", {\n  email_mask: email.replace(/(.).+(@.*)/, \"$1***$2\"),\n  total: respNorm.length\n});\n\n// Salida limpia y estandarizada\nreturn [{\n  json: {\n    alumno_nombre: nombre.toUpperCase(),\n    alumno_email: email.toLowerCase(),\n    respuestas: respNorm,\n    _meta: { valid: true }\n  }\n}];\n"
+        "jsCode": "// HU2 - Normalize & Validate (robusto)\n// Soporta payload en: $json, $json.body, $json.query, $json.formData\n// Parsea respuestas si vienen como string. Normaliza keys y valores.\n// CA2 – Pregunta vacía: log \"pregunta_vacia_normalizada\": true\n\nfunction isEmail(e) {\n  return /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(String(e||\"\").trim());\n}\n\nfunction normalizeKeys(obj) {\n  const out = {};\n  for (const k of Object.keys(obj || {})) {\n    out[k.trim().toLowerCase()] = obj[k];\n  }\n  return out;\n}\n\nfunction pickPayload(src) {\n  // intenta distintas fuentes comunes del Webhook\n  if (src && (src.alumno_nombre || src.respuestas || src.alumno_email)) return src;\n  if (src?.body && (src.body.alumno_nombre || src.body.respuestas || src.body.alumno_email)) return src.body;\n  if (src?.query && (src.query.alumno_nombre || src.query.respuestas || src.query.alumno_email)) return src.query;\n  if (src?.formData && (src.formData.alumno_nombre || src.formData.respuestas || src.formData.alumno_email)) return src.formData;\n  return src || {};\n}\n\nconst raw = $json || {};\nlet payload = pickPayload(raw);\npayload = normalizeKeys(payload);\n\n// Asegurar que \"respuestas\" sea un array\nlet respuestas = payload.respuestas;\nif (typeof respuestas === 'string') {\n  try { respuestas = JSON.parse(respuestas); } catch (e) { respuestas = []; }\n}\nif (!Array.isArray(respuestas)) respuestas = [];\n\n// Extraer campos (después de normalizar keys)\nconst nombre = String(payload.alumno_nombre || \"\").trim();\nconst email  = String(payload.alumno_email  || \"\").trim();\n\n// Validación\nif (!nombre || !isEmail(email)) {\n  return [{\n    json: {\n      error: {\n        code: \"VALIDATION_ERROR\",\n        message: \"Faltan datos del alumno (nombre/email) o email inválido.\",\n        details: { alumno_nombre: !!nombre, alumno_email: isEmail(email) }\n      },\n      _meta: { valid: false, source_hint: Object.keys(raw) }\n    }\n  }];\n}\n\n// Normalizar respuestas: IDs y alternativas a MAYÚSCULAS, vacías => NO_RESPONDIDA\nlet huboVacias = false;\nconst preguntasVacias = [];\n\nconst respNorm = respuestas.map(r => {\n  const obj = normalizeKeys(r || {});\n  const id = String(obj.pregunta_id || \"\").trim().toUpperCase();\n  const marcadaRaw = String(obj.marcada ?? \"\").trim().toUpperCase();\n\n  let marcada = marcadaRaw;\n  if (marcadaRaw === \"\") {\n    marcada = \"NO_RESPONDIDA\";\n    huboVacias = true;\n    if (id) preguntasVacias.push(id);\n  }\n\n  return { pregunta_id: id, marcada };\n});\n\n// Log seguro (anonimizado) + marca CA2\nconsole.log(\"[HU2] Normalize OK\", {\n  email_mask: email.replace(/(.).+(@.*)/, \"$1***$2\"),\n  total: respNorm.length,\n  count_vacias: preguntasVacias.length,\n  pregunta_vacia_normalizada: huboVacias,\n  preguntas_vacias_ids: preguntasVacias\n});\n\n// Salida limpia y estandarizada (incluye meta para evidencias de CA2)\nreturn [{\n  json: {\n    alumno_nombre: nombre.toUpperCase(),\n    alumno_email: email.toLowerCase(),\n    respuestas: respNorm,\n    _meta: {\n      valid: true,\n      pregunta_vacia_normalizada: huboVacias,\n      preguntas_vacias_ids: preguntasVacias,\n      count_vacias: preguntasVacias.length\n    }\n  }\n}];\n"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -265,6 +265,51 @@
       ],
       "id": "c5d1a797-bad1-493a-88ea-81394c10c7ce",
       "name": "OUT_RespondWebhook_Error_HU5"
+    },
+    {
+      "parameters": {
+        "content": "Falta de correo o nombre",
+        "height": 80,
+        "width": 198
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1024,
+        176
+      ],
+      "id": "f16e7796-c3a2-4872-8425-9fca44a08d3c",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "content": "Flujo valido",
+        "height": 80,
+        "width": 150
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2528,
+        48
+      ],
+      "id": "14dc925f-ba03-4711-bdda-884283a4bd2e",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "content": "Flujo sin respuestas por alumno",
+        "height": 80,
+        "width": 246
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2448,
+        -240
+      ],
+      "id": "ea27b626-89c7-433e-893c-dee863d9523b",
+      "name": "Sticky Note2"
     }
   ],
   "pinData": {},
@@ -435,7 +480,7 @@
   "settings": {
     "executionOrder": "v1"
   },
-  "versionId": "2bf0e347-c6f7-45de-8be3-6df88aa53683",
+  "versionId": "02bcb7e5-6e80-47df-a678-c4f068e3d670",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "52020e6536055f243037850b7155c5ca78e4c5d54c959e9719011ec893924076"
