@@ -1,0 +1,1310 @@
+{
+  "name": "My workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "evaluaciones/ingreso",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -4224,
+        448
+      ],
+      "id": "5f97e9f0-7a57-4f82-a4ce-74226c53f851",
+      "name": "API_Webhook_Recepcion - HU1",
+      "webhookId": "de02325f-6718-49c7-bd8a-4592b2c260c7"
+    },
+    {
+      "parameters": {
+        "jsCode": "// MAP_LogRecepcion — HU1 (robusto)\n// Lee payload desde $json, $json.body, $json.query o $json.formData\n// Parsea \"respuestas\" si viene como string. No muta el payload original.\n\nfunction pickPayload(src) {\n  if (!src || typeof src !== 'object') return {};\n  if (src.alumno_nombre || src.alumno_email || src.respuestas) return src;\n  if (src.body && (src.body.alumno_nombre || src.body.alumno_email || src.body.respuestas)) return src.body;\n  if (src.query && (src.query.alumno_nombre || src.query.alumno_email || src.query.respuestas)) return src.query;\n  if (src.formData && (src.formData.alumno_nombre || src.formData.alumno_email || src.formData.respuestas)) return src.formData;\n  return src;\n}\n\nfunction asArrayMaybeParsed(val) {\n  if (Array.isArray(val)) return val;\n  if (typeof val === 'string') {\n    try { const parsed = JSON.parse(val); return Array.isArray(parsed) ? parsed : []; }\n    catch { return []; }\n  }\n  return [];\n}\n\nfunction maskName(n) {\n  if (!n) return \"AlumnoXX\";\n  const p = String(n).trim().split(\" \")[0] || \"Alumno\";\n  return p + \"XX\";\n}\n\nfunction maskEmail(e) {\n  const s = String(e||\"\").trim();\n  if (!s.includes(\"@\")) return \"anon@masked\";\n  const [u, d] = s.split(\"@\");\n  const mu = u.length <= 2 ? u[0] + \"*\" : u[0] + \"*\".repeat(Math.max(1, u.length - 2)) + u.slice(-1);\n  return `${mu}@${d}`;\n}\n\nconst raw = $json || {};\nconst payload = pickPayload(raw);\n\nconst nombre = String(payload.alumno_nombre || \"\").trim();\nconst email  = String(payload.alumno_email  || \"\").trim();\nconst respuestas = asArrayMaybeParsed(payload.respuestas);\n\nconst omitidas_ids = [];\nfor (const r of respuestas) {\n  const marcada = (r && typeof r.marcada !== 'undefined') ? String(r.marcada).trim() : \"\";\n  if (marcada === \"\") omitidas_ids.push(String(r.pregunta_id || \"\").toUpperCase());\n}\n\nconst logEntry = {\n  status: \"recepcion_ok\",\n  alumno: maskName(nombre),\n  email: maskEmail(email),\n  respuestas_count: respuestas.length,\n  omitidas_count: omitidas_ids.length,\n  omitidas_ids,\n  keys_detectadas: Object.keys(payload),\n  at: new Date().toISOString()\n};\n\n// Consola (si usas Executions lo verás) + embebido para evidencias\nconsole.log(\"[HU1] Recepción payload\", logEntry);\n\nreturn [{\n  json: {\n    ...raw,                // NO tocamos el payload real del webhook\n    __log_masked: logEntry // Resumen seguro para ver en Output\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3920,
+        448
+      ],
+      "id": "7a34b817-4649-4969-9c51-60465faf826f",
+      "name": "MAP_LogRecepcion - HU1"
+    },
+    {
+      "parameters": {
+        "jsCode": "// HU2 - Normalize & Validate (multi-item)\n// Soporta payload en: item.json, item.json.body, item.json.query, item.json.formData\n// Normaliza keys y respuestas, valida nombre/email y marca preguntas vacías.\n\nfunction isEmail(e) {\n  return /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(String(e || \"\").trim());\n}\n\nfunction normalizeKeys(obj) {\n  const out = {};\n  for (const k of Object.keys(obj || {})) {\n    out[k.trim().toLowerCase()] = obj[k];\n  }\n  return out;\n}\n\nfunction pickPayload(src) {\n  if (!src) return {};\n  if (src.alumno_nombre || src.alumno_email || src.respuestas) return src;\n  if (src.body && (src.body.alumno_nombre || src.body.alumno_email || src.body.respuestas)) return src.body;\n  if (src.query && (src.query.alumno_nombre || src.query.alumno_email || src.query.respuestas)) return src.query;\n  if (src.formData && (src.formData.alumno_nombre || src.formData.alumno_email || src.formData.respuestas)) return src.formData;\n  return src;\n}\n\n// Procesa UN item (una respuesta de alumno)\nfunction procesarItem(raw) {\n  raw = raw || {};\n\n  let payload = pickPayload(raw);\n  payload = normalizeKeys(payload);\n\n  // Asegurar que \"respuestas\" sea un array\n  let respuestas = payload.respuestas;\n  if (typeof respuestas === \"string\") {\n    try {\n      respuestas = JSON.parse(respuestas);\n    } catch (e) {\n      respuestas = [];\n    }\n  }\n  if (!Array.isArray(respuestas)) respuestas = [];\n\n  // Extraer campos\n  const nombre = String(payload.alumno_nombre || \"\").trim();\n  const email  = String(payload.alumno_email  || \"\").trim();\n\n  // Validación básica\n  if (!nombre || !isEmail(email)) {\n    return {\n      error: {\n        code: \"VALIDATION_ERROR\",\n        message: \"Faltan datos del alumno (nombre/email) o email inválido.\",\n        details: { alumno_nombre: !!nombre, alumno_email: isEmail(email) }\n      },\n      _meta: {\n        valid: false,\n        source_hint: Object.keys(raw)\n      }\n    };\n  }\n\n  // Normalizar respuestas: ID y alternativa a MAYÚSCULAS, vacías => NO_RESPONDIDA\n  let huboVacias = false;\n  const preguntasVacias = [];\n\n  const respNorm = respuestas.map(r => {\n    const obj = normalizeKeys(r || {});\n    const id = String(obj.pregunta_id || \"\").trim().toUpperCase();\n    const marcadaRaw = String(obj.marcada ?? \"\").trim().toUpperCase();\n\n    let marcada = marcadaRaw;\n    if (!marcadaRaw) {\n      marcada = \"NO_RESPONDIDA\";\n      huboVacias = true;\n      if (id) preguntasVacias.push(id);\n    }\n\n    return { pregunta_id: id, marcada };\n  });\n\n  console.log(\"[HU2] Normalize OK\", {\n    email_mask: email.replace(/(.).+(@.*)/, \"$1***$2\"),\n    total: respNorm.length,\n    count_vacias: preguntasVacias.length,\n    pregunta_vacia_normalizada: huboVacias,\n    preguntas_vacias_ids: preguntasVacias\n  });\n\n  // Salida limpia para este alumno\n  return {\n    alumno_nombre_original: nombre,        // nombre real\n    alumno_nombre: nombre.toUpperCase(),   // si quieres mayúsculas internas\n    alumno_email: email.toLowerCase(),\n    respuestas: respNorm,\n    _meta: {\n      valid: true,\n      pregunta_vacia_normalizada: huboVacias,\n      preguntas_vacias_ids: preguntasVacias,\n      count_vacias: preguntasVacias.length\n    }\n  };\n}\n\n// 🔁 Aplicar a TODOS los items que entran al nodo\nreturn items.map(item => ({\n  json: procesarItem(item.json)\n}));\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2544,
+        480
+      ],
+      "id": "7c9fa4dc-ff6c-44e1-b13c-9d8d431cda3b",
+      "name": "CTRL_NormalizePayload - HU2"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1oMjIYlrSItTyJGzUoRdtafkHNFPPqFk2yuCnl5qAhvM",
+          "mode": "list",
+          "cachedResultName": "Resultados Prueba: para docentes",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1oMjIYlrSItTyJGzUoRdtafkHNFPPqFk2yuCnl5qAhvM/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 2129812355,
+          "mode": "list",
+          "cachedResultName": "BK_Preguntas",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1oMjIYlrSItTyJGzUoRdtafkHNFPPqFk2yuCnl5qAhvM/edit#gid=2129812355"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -2544,
+        48
+      ],
+      "id": "e1bbd7ed-e5ab-4347-97f7-979ed1a9bb55",
+      "name": "API_Sheets_BK_Read - HU3",
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "wLGxYfbyYFp8OpCq",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// MAP_LogBK - HU3  (multi-item / no aplasta filas)\n// Lee todos los items (filas de la BK) y filtra las válidas.\n// Devuelve un item por fila, manteniendo todos los registros.\n\nconst out = [];\n\nconst now = new Date().toISOString();\n\nfor (const item of items) {\n  const row = item.json || {};\n\n  // Si no tiene pregunta_id → descartar la fila\n  if (!row.pregunta_id || String(row.pregunta_id).trim() === \"\") {\n    continue;\n  }\n\n  // Clonar la fila y agregar trace\n  out.push({\n    json: {\n      ...row,\n      __trace: [\n        ...(row.__trace || []),\n        {\n          step: \"HU3\",\n          msg: \"bk_ok\",\n          at: now,\n          rows: 1\n        }\n      ]\n    }\n  });\n}\n\nreturn out;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2320,
+        48
+      ],
+      "id": "9724817e-2903-4039-bff6-9165008b557f",
+      "name": "MAP_LogBK - HU3"
+    },
+    {
+      "parameters": {
+        "jsCode": "/**\n * CTRL_CompararRespuestas – HU4 (multi-item)\n *\n * Compara respuestas del alumno vs BK para CADA item (alumno).\n * IN por item:\n *   data.respuestas: [{ pregunta_id, marcada?, marcada_letra? }]\n *   data.bk: [{ pregunta_id, A,B,C,D, correcta, explicacion, puntaje? }]\n *\n * OUT por item:\n *   data.comparacion: [{\n *      pregunta_id, marcada, correcta, estado,\n *      puntaje_pregunta, puntaje_asignado, explicacion\n *   }, ...]\n *   data.totales: { puntaje_total, puntaje_obtenido, aciertos, errores, omitidas, no_encontradas }\n *   data.total, data.obtenido\n */\n\nfunction compararParaItem(data) {\n  const respuestas = Array.isArray(data.respuestas) ? data.respuestas : [];\n  const bk = Array.isArray(data.bk) ? data.bk : [];\n\n  // Indexar BK por pregunta_id\n  const idxBk = {};\n  for (const row of bk) {\n    const pid = String(row.pregunta_id || \"\").trim().toUpperCase();\n    if (!pid) continue;\n    idxBk[pid] = row;\n  }\n\n  let puntaje_total = 0;\n  let puntaje_obtenido = 0;\n  let aciertos = 0;\n  let errores = 0;\n  let omitidas = 0;\n  let no_encontradas = 0;\n\n  const comparacion = [];\n\n  const t0 = Date.now();\n\n  for (const r of respuestas) {\n    const pid = String(r.pregunta_id || \"\").trim().toUpperCase();\n    const row = idxBk[pid];\n\n    // Si la pregunta no existe en la BK\n    if (!row) {\n      no_encontradas += 1;\n      comparacion.push({\n        pregunta_id: pid,\n        marcada: String(r.marcada_letra || r.marcada || \"\").toUpperCase(),\n        correcta: \"\",\n        estado: \"NO_ENCONTRADA\",\n        puntaje_pregunta: 0,\n        puntaje_asignado: 0,\n        explicacion: \"Pregunta no encontrada en BK.\"\n      });\n      continue;\n    }\n\n    // Determinar alternativa marcada (prioridad marcada_letra)\n    let marcada = String(\n      r.marcada_letra || r.marcada || \"\"\n    ).toUpperCase().trim();\n\n    const puntaje_pregunta = Number(row.puntaje ?? 1) || 1;\n    puntaje_total += puntaje_pregunta;\n\n    // Omitida\n    if (marcada === \"\" || marcada === \"NO_RESPONDIDA\") {\n      omitidas += 1;\n      comparacion.push({\n        pregunta_id: pid,\n        marcada: \"NO_RESPONDIDA\",\n        correcta: String(row.correcta || \"\").toUpperCase(),\n        estado: \"OMITIDA\",\n        puntaje_pregunta,\n        puntaje_asignado: 0,\n        explicacion: row.explicacion || \"Pregunta omitida.\"\n      });\n      continue;\n    }\n\n    // Comparación directa por letra\n    const correcta = String(row.correcta || \"\").toUpperCase();\n    const esCorrecta = (marcada === correcta);\n\n    if (esCorrecta) {\n      aciertos += 1;\n      puntaje_obtenido += puntaje_pregunta;\n      comparacion.push({\n        pregunta_id: pid,\n        marcada,\n        correcta,\n        estado: \"CORRECTA\",\n        puntaje_pregunta,\n        puntaje_asignado: puntaje_pregunta,\n        explicacion: row.explicacion || \"\"\n      });\n    } else {\n      errores += 1;\n      comparacion.push({\n        pregunta_id: pid,\n        marcada,\n        correcta,\n        estado: \"INCORRECTA\",\n        puntaje_pregunta,\n        puntaje_asignado: 0,\n        explicacion: row.explicacion || \"\"\n      });\n    }\n  }\n\n  const ms = Date.now() - t0;\n\n  const total = puntaje_total;\n  const obtenido = puntaje_obtenido;\n\n  const trace = Array.isArray(data.__trace) ? data.__trace : [];\n  trace.push({\n    step: \"HU4\",\n    msg: \"comparacion_ok\",\n    at: new Date().toISOString(),\n    totales: {\n      puntaje_total,\n      puntaje_obtenido,\n      aciertos,\n      errores,\n      omitidas,\n      no_encontradas\n    }\n  });\n\n  return {\n    ...data,\n    comparacion,\n    totales: {\n      puntaje_total,\n      puntaje_obtenido,\n      aciertos,\n      errores,\n      omitidas,\n      no_encontradas\n    },\n    total,\n    obtenido,\n    __trace: trace,\n    __hu4_log: {\n      ms,\n      filas_bk: bk.length,\n      respuestas_count: respuestas.length\n    }\n  };\n}\n\n// 🔁 Aplicar la comparación a TODOS los items (cada alumno + BK)\nreturn items.map(item => ({\n  json: compararParaItem(item.json || {})\n}));\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1136,
+        176
+      ],
+      "id": "a0342ea0-3ca4-4777-b8b8-06b038142161",
+      "name": "CTRL_CompararRespuestas - HU4",
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "jsCode": "// MAP_LogComparar - HU4 (multi-item, no aplasta items)\n// Solo agrega info de log/trace a CADA item sin cambiar la cantidad.\n\nconst now = new Date().toISOString();\n\nreturn items.map(item => {\n  const data = item.json || {};\n  const tot = data.totales || {};\n\n  // Log simple a consola (opcional)\n  console.log(\"[HU4][MAP_LogComparar]\", {\n    email_mask: data.alumno_email\n      ? String(data.alumno_email).replace(/(.).+(@.*)/, \"$1***$2\")\n      : \"sin_email\",\n    puntaje_total: tot.puntaje_total,\n    puntaje_obtenido: tot.puntaje_obtenido,\n    aciertos: tot.aciertos,\n    errores: tot.errores,\n    omitidas: tot.omitidas,\n    no_encontradas: tot.no_encontradas\n  });\n\n  // Trace interno\n  const trace = Array.isArray(data.__trace) ? data.__trace : [];\n  trace.push({\n    step: \"HU4_LOG\",\n    msg: \"comparacion_log\",\n    at: now,\n    totales: {\n      puntaje_total: tot.puntaje_total,\n      puntaje_obtenido: tot.puntaje_obtenido,\n      aciertos: tot.aciertos,\n      errores: tot.errores,\n      omitidas: tot.omitidas,\n      no_encontradas: tot.no_encontradas\n    }\n  });\n\n  return {\n    json: {\n      ...data,\n      __trace: trace\n    }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -832,
+        176
+      ],
+      "id": "d79bf8bf-a2a4-40cf-9bcb-d471af5567f0",
+      "name": "MAP_LogComparar - HU4"
+    },
+    {
+      "parameters": {
+        "jsCode": "// HU5 - Cálculo de nota ponderada + validaciones negativas (multi-item)\n\n/**\n * Aplica la lógica original de HU5 a UN solo item.\n */\nfunction calcularNotaParaItem(inJsonRaw) {\n  const inJson = inJsonRaw || {};\n  const trace = Array.isArray(inJson.__trace) ? inJson.__trace : [];\n\n  const tot      = inJson.totales || {};\n  const obtenido = Number(tot.puntaje_obtenido || 0);\n  // 👇 clave REAL que entrega HU4\n  const total    = Number(tot.puntaje_total || 0);\n\n  // contar preguntas totales (aciertos+errores+omitidas+no_encontradas)\n  const totalPreg = Number(\n    (tot.aciertos || 0) +\n    (tot.errores || 0) +\n    (tot.omitidas || 0) +\n    (tot.no_encontradas || 0)\n  );\n  const omitidas  = Number(tot.omitidas || 0);\n\n  // ❌ CA: puntaje inválido\n  if (!Number.isFinite(total) || total <= 0) {\n    const err = {\n      code: \"puntaje_invalido\",\n      message: \"Total de puntaje = 0. Nota incalculable.\",\n    };\n    trace.push({\n      step: \"HU5\",\n      msg: \"puntaje_invalido\",\n      at: new Date().toISOString(),\n      details: { total },\n    });\n\n    return {\n      ...inJson,\n      error: err,\n      _meta: { ...(inJson._meta || {}), step: \"HU5\" },\n      __trace: trace,\n    };\n  }\n\n  // ❌ CA: todas omitidas\n  const allOmitidas = totalPreg > 0 && omitidas === totalPreg;\n  if (allOmitidas) {\n    const err = {\n      code: \"sin_respuestas\",\n      message:\n        \"Todas las preguntas fueron omitidas. Nota incalculable.\",\n    };\n    trace.push({\n      step: \"HU5\",\n      msg: \"sin_respuestas\",\n      at: new Date().toISOString(),\n      details: { totalPreg, omitidas },\n    });\n\n    return {\n      ...inJson,\n      error: err,\n      _meta: { ...(inJson._meta || {}), step: \"HU5\" },\n      __trace: trace,\n    };\n  }\n\n  // ✅ cálculo\n  const porcentaje = (obtenido / total) * 100;\n  const notaRaw = 1 + 6 * (porcentaje / 100);\n  const nota = Math.round(notaRaw * 10) / 10;\n  const aprobado = porcentaje >= 60;\n  const porcentaje1d = Math.round(porcentaje * 10) / 10;\n\n  const resultado = {\n    alumno_nombre: inJson.alumno_nombre,\n    alumno_email:  inJson.alumno_email,\n    porcentaje: porcentaje1d,\n    nota,\n    aprobado,\n    mensaje: aprobado ? \"Aprobado (≥60%)\" : \"Reprobado (<60%)\",\n    puntaje: { obtenido, total },\n  };\n\n  trace.push({\n    step: \"HU5\",\n    msg: \"resultado_ok\",\n    at: new Date().toISOString(),\n    resultado,\n  });\n\n  return {\n    ...inJson,\n    resultado,\n    __trace: trace,\n  };\n}\n\n// 🔁 Aplicar la lógica de HU5 a TODOS los items (cada alumno)\nreturn items.map(item => ({\n  json: calcularNotaParaItem(item.json || {}),\n}));\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -528,
+        176
+      ],
+      "id": "ac78c7dc-371d-4f10-948e-83086672a400",
+      "name": "CTRL_CalcularNota - HU5"
+    },
+    {
+      "parameters": {
+        "jsCode": "// MAP_LogResultado - HU5 (multi-item, no aplasta items)\n// Solo agrega info de log/trace a CADA item sin cambiar la cantidad.\n\nconst now = new Date().toISOString();\n\nreturn items.map(item => {\n  const data = item.json || {};\n  const resultado = data.resultado || {};\n  const tot = data.totales || {};\n\n  // Log a consola (opcional)\n  console.log(\"[HU5][MAP_LogResultado]\", {\n    email_mask: data.alumno_email\n      ? String(data.alumno_email).replace(/(.).+(@.*)/, \"$1***$2\")\n      : \"sin_email\",\n    nota: resultado.nota,\n    porcentaje: resultado.porcentaje,\n    aprobado: resultado.aprobado,\n    puntaje_obtenido: tot.puntaje_obtenido,\n    puntaje_total: tot.puntaje_total\n  });\n\n  // Actualizar trace interno\n  const trace = Array.isArray(data.__trace) ? data.__trace : [];\n  trace.push({\n    step: \"HU5_LOG\",\n    msg: \"resultado_log\",\n    at: now,\n    resultado: {\n      nota: resultado.nota,\n      porcentaje: resultado.porcentaje,\n      aprobado: resultado.aprobado\n    }\n  });\n\n  return {\n    json: {\n      ...data,\n      __trace: trace\n    }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -16,
+        352
+      ],
+      "id": "d17ef2f1-a8d3-4155-817f-f0e0923357fb",
+      "name": "MAP_LogResultado - HU5"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{ \"error\": { \"code\": \"VALIDATION_ERROR\", \"message\": \"Faltan datos del alumno (nombre/email) o email inválido.\" } }\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        -1584,
+        496
+      ],
+      "id": "79a2eade-e4eb-4368-a24f-4e9652a99e63",
+      "name": "OUT_RespondWebhook_Error_HU2",
+      "notesInFlow": false,
+      "notes": "error 400"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "7a07cdac-dbcf-40a9-9c56-b1cc9fbc0a53",
+              "leftValue": "={{ $json._meta.valid }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -1984,
+        480
+      ],
+      "id": "fb0ca048-b192-42b2-8ec0-089a5ca89eb0",
+      "name": "CTRL_Guard__Valid - HU2"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"estado\": \"rechazado\",\n  \"motivo\": \"sin_respuestas\",\n  \"Error\": \"No se puede calcular la nota: todas las preguntas fueron omitidas.\"\n}\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        80,
+        80
+      ],
+      "id": "691ca9e3-06f1-400c-b44d-2fa87dd7c84e",
+      "name": "OUT_RespondWebhook_Error_HU5"
+    },
+    {
+      "parameters": {
+        "content": "Falta de correo o nombre",
+        "height": 80,
+        "width": 198
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -1632,
+        416
+      ],
+      "id": "0f2a05f1-3487-4bfb-8baf-ecfaf16348e1",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "content": "Evita multi-intentos por correo.",
+        "height": 80,
+        "width": 150
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1488,
+        32
+      ],
+      "id": "27a57c22-df43-4643-8c82-dc0fc4d342d4",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "content": "Flujo sin respuestas por alumno",
+        "height": 80,
+        "width": 246
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "1b94785a-56ea-45ca-b31e-4ed764b4a6e7",
+      "name": "Sticky Note2"
+    },
+    {
+      "parameters": {
+        "jsCode": "/**\n * CTRL_GenerarFeedback_HU6 — multi-item\n * Genera feedback y bloques HTML para CADA alumno.\n */\n\nfunction generarFeedbackParaItem(data) {\n  const comparacion = Array.isArray(data.comparacion) ? data.comparacion : [];\n  const totales     = data.totales || {};\n  const resultado   = data.resultado || {};\n  const respuestas  = Array.isArray(data.respuestas) ? data.respuestas : [];\n  const bk          = Array.isArray(data.bk) ? data.bk : [];\n\n  // nombre real del alumno (para el correo)\n  const alumno_nombre_real =\n    String(data.alumno_nombre_original || data.alumno_nombre || \"Alumno(a)\").trim();\n\n  // Helpers\n  const findBk = (pid) =>\n    bk.find(b => String(b.pregunta_id).toUpperCase() === String(pid).toUpperCase()) || null;\n\n  const findResp = (pid) =>\n    respuestas.find(r => String(r.pregunta_id).toUpperCase() === String(pid).toUpperCase()) || null;\n\n  // ---- DETALLE: solo preguntas incorrectas ----\n  const detalle = [];\n\n  for (const cmp of comparacion) {\n    if (cmp.estado !== \"INCORRECTA\") continue;\n\n    const pid = cmp.pregunta_id;\n    const bkRow   = findBk(pid);\n    const respRow = findResp(pid);\n\n    const enunciado = respRow?.enunciado || bkRow?.enunciado || `Pregunta ${pid}`;\n\n    let respuestaAlumnoTxt = \"No respondida\";\n    let respuestaCorrectaTxt = \"No disponible\";\n\n    if (bkRow) {\n      const marcadaLetra  = (cmp.marcada || \"\").toUpperCase();\n      const correctaLetra = (cmp.correcta || \"\").toUpperCase();\n\n      if (marcadaLetra && bkRow[marcadaLetra] != null && marcadaLetra !== \"NO_RESPONDIDA\") {\n        respuestaAlumnoTxt = `${marcadaLetra}) ${bkRow[marcadaLetra]}`;\n      } else if (marcadaLetra === \"NO_RESPONDIDA\") {\n        respuestaAlumnoTxt = \"No respondida\";\n      }\n\n      if (correctaLetra && bkRow[correctaLetra] != null) {\n        respuestaCorrectaTxt = `${correctaLetra}) ${bkRow[correctaLetra]}`;\n      }\n    }\n\n    const explicacion = cmp.explicacion || bkRow?.explicacion || \"\";\n\n    detalle.push({\n      pregunta_id: pid,\n      enunciado,\n      respuesta_alumno: respuestaAlumnoTxt,\n      respuesta_correcta: respuestaCorrectaTxt,\n      explicacion\n    });\n  }\n\n  // ---- RESUMEN numérico ----\n  const resumen = {\n    nota:        resultado.nota ?? null,\n    porcentaje:  resultado.porcentaje ?? null,\n    aprobado:    !!resultado.aprobado,\n    aciertos:    totales.aciertos ?? 0,\n    errores:     totales.errores ?? 0,\n    omitidas:    totales.omitidas ?? 0,\n    no_encontradas: totales.no_encontradas ?? 0\n  };\n\n  const estadoTexto = resumen.aprobado ? \"APROBADO\" : \"REPROBADO\";\n\n  const resumen_html = `\n    <table style=\"border-collapse:collapse; margin-top:10px;\">\n      <tr>\n        <th style=\"border:1px solid #ddd; padding:6px;\">Resultado</th>\n        <th style=\"border:1px solid #ddd; padding:6px;\">Nota</th>\n        <th style=\"border:1px solid #ddd; padding:6px;\">Puntaje</th>\n      </tr>\n      <tr>\n        <td style=\"border:1px solid #ddd; padding:6px;\">${estadoTexto}</td>\n        <td style=\"border:1px solid #ddd; padding:6px;\">${resumen.nota ?? \"-\"} / 7,0</td>\n        <td style=\"border:1px solid #ddd; padding:6px;\">${resumen.porcentaje ?? 0}%</td>\n      </tr>\n    </table>\n    <p style=\"margin-top:10px;\">\n      ✅ Aciertos: ${resumen.aciertos} &nbsp;|&nbsp;\n      ❌ Errores: ${resumen.errores} &nbsp;|&nbsp;\n      ⚪ Omitidas: ${resumen.omitidas}\n    </p>\n  `;\n\n  // ---- LISTA de feedback ----\n  let feedback_html_list = \"\";\n  if (detalle.length > 0) {\n    feedback_html_list =\n      '<div style=\"border:1px solid #eee; border-radius:8px; padding:10px;\">' +\n      detalle.map(d => `\n        <div style=\"margin-bottom:10px;\">\n          <p><strong>${d.enunciado}</strong></p>\n          <p>Tu respuesta: ${d.respuesta_alumno}</p>\n          <p>Respuesta correcta: ${d.respuesta_correcta}</p>\n          ${d.explicacion ? `<p><em>${d.explicacion}</em></p>` : \"\"}\n        </div>\n      `).join(\"\") +\n      '</div>';\n  } else {\n    feedback_html_list = \"<p>No hay preguntas con error. ¡Excelente!</p>\";\n  }\n\n  // ---- Mensaje final ----\n  const mensaje_final_html = resumen.aprobado\n    ? \"🎉 <strong>¡Felicitaciones!</strong> Has aprobado con un buen resultado. Sigue así.\"\n    : \"💪 No te desanimes. Revisa las explicaciones y vuelve a intentarlo para mejorar tu resultado.\";\n\n  // ---- Trace ----\n  const trace = Array.isArray(data.__trace) ? data.__trace : [];\n  trace.push({\n    step: \"HU6\",\n    msg: \"feedback_generado\",\n    at: new Date().toISOString(),\n    detalles: {\n      errores: resumen.errores,\n      omitidas: resumen.omitidas\n    }\n  });\n\n  return {\n    ...data,\n    alumno_nombre_real,\n    feedback: { resumen, detalle },\n    resumen_html,\n    feedback_html_list,\n    mensaje_final_html,\n    __trace: trace,\n    __hu6_log: {\n      feedback_detallado: detalle.length > 0,\n      preguntas_con_feedback: detalle.length\n    }\n  };\n}\n\n// 🔁 aplicar a TODOS los items (todos los alumnos)\nreturn items.map(item => ({\n  json: generarFeedbackParaItem(item.json || {})\n}));\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1472,
+        384
+      ],
+      "id": "2ebb5c80-4379-4b24-852a-5feb04d0574c",
+      "name": "CTRL_GenerarFeedback_HU6"
+    },
+    {
+      "parameters": {
+        "jsCode": "// OUT_LogEnvio_HU6 (multi-item)\n// Marca que el envío de correo se intentó / completó para CADA item,\n// sin cambiar la cantidad de items.\n\nconst now = new Date().toISOString();\n\nreturn items.map(item => {\n  const data = item.json || {};\n\n  const email = data.alumno_email || \"(sin_email)\";\n  const resultado = data.resultado || {};\n  const feedback = data.feedback || {};\n\n  // Log a consola (opcional)\n  console.log(\"[HU6][OUT_LogEnvio]\", {\n    email_mask: String(email).replace(/(.).+(@.*)/, \"$1***$2\"),\n    nota: resultado.nota,\n    porcentaje: resultado.porcentaje,\n    aprobado: resultado.aprobado,\n    tiene_feedback: !!feedback.detalle\n  });\n\n  // Actualizar trace\n  const trace = Array.isArray(data.__trace) ? data.__trace : [];\n  trace.push({\n    step: \"HU6_OUT\",\n    msg: \"correo_intentado\",\n    at: now,\n    resultado: {\n      nota: resultado.nota,\n      porcentaje: resultado.porcentaje,\n      aprobado: resultado.aprobado\n    }\n  });\n\n  return {\n    json: {\n      ...data,\n      __trace: trace,\n      __hu6_envio: {\n        ...(data.__hu6_envio || {}),\n        intento: true\n      }\n    }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1936,
+        384
+      ],
+      "id": "bc72557b-3946-42c3-8fe7-0e23a24df328",
+      "name": "OUT_LogEnvio_HU6"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1oMjIYlrSItTyJGzUoRdtafkHNFPPqFk2yuCnl5qAhvM",
+          "mode": "list",
+          "cachedResultName": "Resultados Prueba: para docentes",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1oMjIYlrSItTyJGzUoRdtafkHNFPPqFk2yuCnl5qAhvM/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Hoja 1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1oMjIYlrSItTyJGzUoRdtafkHNFPPqFk2yuCnl5qAhvM/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "ts_iso": "={{new Date().toISOString()}}",
+            "alumno_email": "={{ $('CTRL_GenerarFeedback_HU6').item.json.resultado.alumno_email }}",
+            "porcentaje": "={{ $('CTRL_GenerarFeedback_HU6').item.json.resultado.porcentaje }}",
+            "nota": "={{ $('CTRL_GenerarFeedback_HU6').item.json.resultado.nota }}",
+            "aprobado": "={{ $('CTRL_GenerarFeedback_HU6').item.json.resultado.aprobado }}",
+            "dificultad": "\"media\"",
+            "attempt_id": "={{ $('CTRL_GenerarFeedback_HU6').item.json.attempt_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "ts_iso",
+              "displayName": "ts_iso",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "alumno_email",
+              "displayName": "alumno_email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "porcentaje",
+              "displayName": "porcentaje",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "nota",
+              "displayName": "nota",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "aprobado",
+              "displayName": "aprobado",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "dificultad",
+              "displayName": "dificultad",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "attempt_id",
+              "displayName": "attempt_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        2416,
+        368
+      ],
+      "id": "5b759b19-9e3a-4e5c-992e-da7fb0c3dfa7",
+      "name": "API_Sheets_Write_HU7",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "wLGxYfbyYFp8OpCq",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// OUT_LogRegistro_HU7 (multi-item)\n// Marca que el registro en Google Sheets se realizó para CADA item,\n// sin cambiar la cantidad de items.\n\nconst now = new Date().toISOString();\n\nreturn items.map(item => {\n  const data = item.json || {};\n  const resultado = data.resultado || {};\n  const email = data.alumno_email || \"(sin_email)\";\n  const attempt = data.attempt_id || \"(sin_attempt)\";\n\n  // Log a consola (opcional)\n  console.log(\"[HU7][OUT_LogRegistro]\", {\n    email_mask: String(email).replace(/(.).+(@.*)/, \"$1***$2\"),\n    nota: resultado.nota,\n    porcentaje: resultado.porcentaje,\n    attempt_id: attempt\n  });\n\n  // Actualizar trace\n  const trace = Array.isArray(data.__trace) ? data.__trace : [];\n  trace.push({\n    step: \"HU7_OUT\",\n    msg: \"registro_ok\",\n    at: now,\n    attempt_id: attempt\n  });\n\n  return {\n    json: {\n      ...data,\n      __trace: trace,\n      __hu7_registro: {\n        ...(data.__hu7_registro || {}),\n        ok: true\n      }\n    }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2688,
+        368
+      ],
+      "id": "fee7183c-6495-4f88-94e0-4e2ae8ad9a61",
+      "name": "OUT_LogRegistro_HU7"
+    },
+    {
+      "parameters": {
+        "jsCode": "// CTRL_EstablecerAttempt_HU8  (multi-item)\n// Si ya existe attempt_id lo respeta, si no, genera uno por alumno.\n\nfunction generarAttemptId(baseString) {\n  try {\n    return Buffer.from(baseString).toString(\"base64\").replace(/=/g, \"\").slice(0, 12);\n  } catch (e) {\n    return \"ERRATTEMPT\";\n  }\n}\n\nfunction procesarItem(data) {\n  const now = new Date();\n\n  const email = String(data.alumno_email || \"\").trim().toLowerCase();\n  const resultado = data.resultado || {};\n  const porcentaje = Number(resultado.porcentaje || 0);\n\n  // Si ya existe → respetar\n  let attempt = data.attempt_id;\n  if (!attempt) {\n    const fecha = now.toISOString().split(\"T\")[0]; // YYYY-MM-DD\n    const base = `${email}|${porcentaje}|${fecha}`;\n    attempt = generarAttemptId(base);\n  }\n\n  // Trace HU8\n  const trace = Array.isArray(data.__trace) ? data.__trace : [];\n  trace.push({\n    step: \"HU8\",\n    msg: \"attempt_establecido\",\n    at: now.toISOString(),\n    attempt_id: attempt\n  });\n\n  return {\n    ...data,\n    attempt_id: attempt,\n    __trace: trace\n  };\n}\n\n// 🔁 Aplicar a todos los alumnos\nreturn items.map(item => ({\n  json: procesarItem(item.json || {})\n}));\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        192,
+        352
+      ],
+      "id": "6f906f13-a1c5-4296-8f82-05b75739f37c",
+      "name": "CTRL_EstablecerAttempt_HU8"
+    },
+    {
+      "parameters": {
+        "jsCode": "// CTRL_Idempotencia_HU8 (multi-item)\n// Para cada alumno, revisa si su attempt_id ya existe en la lista de locks.\n// Espera que cada item traiga:\n//   data.attempt_id\n//   data.locks: [ { attempt_id: \"...\" }, ... ]\n\nfunction checkIdempotenciaParaItem(data) {\n  const attemptId = String(data.attempt_id || \"\").trim();\n  const locksRaw  = data.locks;\n\n  // Normalizar locks a array simple\n  const locks = Array.isArray(locksRaw)\n    ? locksRaw\n    : (Array.isArray(locksRaw?.data) ? locksRaw.data : []);\n\n  let yaExiste = false;\n\n  if (attemptId && Array.isArray(locks) && locks.length > 0) {\n    yaExiste = locks.some(row => {\n      const rowId =\n        row && typeof row === \"object\"\n          ? String(row.attempt_id || row.attempt || \"\").trim()\n          : \"\";\n      return rowId === attemptId;\n    });\n  }\n\n  const trace = Array.isArray(data.__trace) ? data.__trace : [];\n  trace.push({\n    step: \"HU8_IDEMP\",\n    msg: \"idempotencia_check\",\n    at: new Date().toISOString(),\n    attempt_id: attemptId,\n    idempotente: yaExiste\n  });\n\n  return {\n    ...data,\n    __trace: trace,\n    __hu8: {\n      ...(data.__hu8 || {}),\n      idempotente: yaExiste\n    }\n  };\n}\n\n// 🔁 Procesar TODOS los alumnos\nreturn items.map(item => ({\n  json: checkIdempotenciaParaItem(item.json || {})\n}));\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1024,
+        368
+      ],
+      "id": "def4bfc7-791d-4130-8124-7349654553cc",
+      "name": "CTRL_Idempotencia_HU8",
+      "executeOnce": false
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "0d5151f8-3504-405a-a7d1-4bce0df5a36d",
+              "leftValue": "={{$json.__hu8?.idempotente === true}}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1232,
+        368
+      ],
+      "id": "3541778e-8e57-4b7e-9731-4c560c8a30d1",
+      "name": "IF_Idempotente_HU8"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1oMjIYlrSItTyJGzUoRdtafkHNFPPqFk2yuCnl5qAhvM",
+          "mode": "list",
+          "cachedResultName": "Resultados Prueba: para docentes",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1oMjIYlrSItTyJGzUoRdtafkHNFPPqFk2yuCnl5qAhvM/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 793025358,
+          "mode": "list",
+          "cachedResultName": "Locks",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1oMjIYlrSItTyJGzUoRdtafkHNFPPqFk2yuCnl5qAhvM/edit#gid=793025358"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        400,
+        480
+      ],
+      "id": "47187c99-6dff-4361-971e-c211c2ea274b",
+      "name": "API_Sheets_CheckLock_HU8",
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "wLGxYfbyYFp8OpCq",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1oMjIYlrSItTyJGzUoRdtafkHNFPPqFk2yuCnl5qAhvM",
+          "mode": "list",
+          "cachedResultName": "Resultados Prueba: para docentes",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1oMjIYlrSItTyJGzUoRdtafkHNFPPqFk2yuCnl5qAhvM/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 793025358,
+          "mode": "list",
+          "cachedResultName": "Locks",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1oMjIYlrSItTyJGzUoRdtafkHNFPPqFk2yuCnl5qAhvM/edit#gid=793025358"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "attempt_id": "={{ $json.attempt_id }}",
+            "ts_iso": "={{ new Date().toISOString() }}",
+            "alumno_email": "={{ $json.alumno_email }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "attempt_id",
+              "displayName": "attempt_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ts_iso",
+              "displayName": "ts_iso",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "alumno_email",
+              "displayName": "alumno_email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        2976,
+        368
+      ],
+      "id": "cfa88898-6f09-4478-9870-003a0a6aa1da",
+      "name": "API_Sheets_WriteLock_HU8",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "wLGxYfbyYFp8OpCq",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\n  error: {\n    code: \"envio_fallido\",\n    message: $json.error?.message || \"Fallo al enviar correo (HU6).\",\n    step: \"HU6\"\n  },\n  _meta: { step: \"HU6\", status: \"error\" },\n  at: new Date().toISOString()\n} }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        2480,
+        640
+      ],
+      "id": "a6ccdbae-5bcf-43a2-b214-24795720790e",
+      "name": "OUT_RespondWebhook_Error_HU6",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "content": "error de envío (SMTP, timeout)",
+        "height": 80,
+        "width": 150
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2448,
+        816
+      ],
+      "id": "41bc41a4-f548-4431-9494-011aa5d43701",
+      "name": "Sticky Note4"
+    },
+    {
+      "parameters": {
+        "content": "Guarda los datos para evitar respuestas duplicadas",
+        "height": 80,
+        "width": 150
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2944,
+        208
+      ],
+      "id": "1f42ef56-a62b-47cb-a469-d8b0128b7c63",
+      "name": "Sticky Note5"
+    },
+    {
+      "parameters": {
+        "jsCode": "// CTRL_MapTextoALetra_HU4_PRE  (multi-item)\n// Para cada alumno, toma sus respuestas y su BK, y mapea texto -> letra (A/B/C/D).\n\nfunction mapTextoALetraParaItem(data) {\n  const respuestas = Array.isArray(data.respuestas) ? data.respuestas : [];\n  const bk = Array.isArray(data.bk) ? data.bk : [];\n\n  // Indexar BK por pregunta_id para acceso rápido\n  const indexBk = {};\n  for (const row of bk) {\n    const pid = String(row.pregunta_id || \"\").trim().toUpperCase();\n    if (!pid) continue;\n    indexBk[pid] = row;\n  }\n\n  const opciones = [\"A\", \"B\", \"C\", \"D\"];\n\n  const nuevasRespuestas = respuestas.map(r => {\n    const pid = String(r.pregunta_id || \"\").trim().toUpperCase();\n    const rawMarcada = r.marcada == null ? \"\" : String(r.marcada).trim();\n    const bkRow = indexBk[pid];\n\n    let marcadaLetra = \"\";\n    let marcadaTexto = rawMarcada;\n\n    // Caso 1: no marcó nada\n    if (!rawMarcada) {\n      marcadaLetra = \"NO_RESPONDIDA\";\n    } else if (bkRow) {\n      const upper = rawMarcada.toUpperCase();\n\n      // Caso 2: ya viene letra A/B/C/D\n      if (opciones.includes(upper)) {\n        marcadaLetra = upper;\n      } else {\n        // Caso 3: viene el TEXTO de la alternativa → buscar qué letra es\n        const target = rawMarcada.toLowerCase().trim();\n\n        for (const letra of opciones) {\n          const textoOpcion = bkRow[letra];\n          if (textoOpcion == null) continue;\n          if (String(textoOpcion).toLowerCase().trim() === target) {\n            marcadaLetra = letra;\n            break;\n          }\n        }\n\n        if (!marcadaLetra) {\n          // No calzó con ningún texto conocido\n          marcadaLetra = \"NO_RESPONDIDA\";\n        }\n      }\n    } else {\n      // No hay BK para esa pregunta → dejamos lo que venga, pero en mayúsculas\n      marcadaLetra = rawMarcada ? rawMarcada.toUpperCase() : \"NO_RESPONDIDA\";\n    }\n\n    return {\n      ...r,\n      pregunta_id: pid,\n      marcada: marcadaTexto,\n      marcada_letra: marcadaLetra,\n    };\n  });\n\n  const trace = Array.isArray(data.__trace) ? data.__trace : [];\n  trace.push({\n    step: \"HU4_PRE\",\n    msg: \"map_texto_a_letra_ok\",\n    at: new Date().toISOString(),\n    respuestas: nuevasRespuestas.length,\n  });\n\n  return {\n    ...data,\n    respuestas: nuevasRespuestas,\n    __trace: trace,\n  };\n}\n\n// 🔁 Aplicar a TODOS los items (cada alumno + BK)\nreturn items.map(item => ({\n  json: mapTextoALetraParaItem(item.json || {}),\n}));\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1440,
+        176
+      ],
+      "id": "2a95e1f1-b1d4-45b7-bc5a-99dfbbc02fcf",
+      "name": "CTRL_MapTextoALetra_HU4_PRE"
+    },
+    {
+      "parameters": {
+        "content": "Integracion con Forms",
+        "height": 80,
+        "width": 198
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -3008,
+        224
+      ],
+      "id": "ba77b161-44b3-4711-9fff-fa378894b596",
+      "name": "Sticky Note6"
+    },
+    {
+      "parameters": {
+        "content": "Para testear con postman. Conectar con APISheet-HU3 y NormalizePayload-HU2",
+        "height": 80,
+        "width": 214
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -4144,
+        320
+      ],
+      "id": "a4ccb9e8-06ae-43b1-87bf-aa9f009cee57",
+      "name": "Sticky Note7"
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.alumno_email }}",
+        "subject": "=Resultado evaluación \n– Nota \n- Porcentaje acertado {{ $json.feedback.resumen.porcentaje }}%",
+        "message": "=<html>\n  <body style=\"font-family: Arial, sans-serif; color:#333;\">\n    <div style=\"max-width:650px; margin:auto; border:1px solid #ddd; padding:20px; border-radius:10px;\">\n      <h2 style=\"color:#0b5394; text-align:center;\">📘 Resultado de tu evaluación</h2>\n\n      <p>Hola <strong>Alumno(a)</strong>,</p>\n      <p>Tu evaluación ha sido procesada correctamente. Aquí tienes un resumen general:</p>\n\n      {{$json.resumen_html}}\n\n      <h3 style=\"color:#0b5394; margin-top:25px;\">📋 Retroalimentación personalizada</h3>\n      {{$json.feedback_html_list}}\n\n      <p style=\"margin-top:25px;\">{{$json.mensaje_final_html}}</p>\n\n      <hr style=\"border:none; border-top:1px solid #ccc; margin:30px 0;\">\n      <p style=\"font-size:12px; color:#666; text-align:center;\">\n        Enviado automáticamente por el sistema <strong>Espejo Académico</strong>.<br>\n        No respondas a este correo.\n      </p>\n    </div>\n  </body>\n</html>\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1696,
+        384
+      ],
+      "id": "443dbd2b-dc38-456e-a18f-ce772746f402",
+      "name": "API_SendEmail_HU6",
+      "webhookId": "b55f24ad-9382-4c8e-adff-6159720a43d9",
+      "alwaysOutputData": false,
+      "executeOnce": false,
+      "retryOnFail": false,
+      "notesInFlow": false,
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "gbnE8gqQjxVyvvqO",
+          "name": "Gmail account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "caa5610c-2d04-44e2-9d9e-c6b9029926c5",
+              "leftValue": "={{ $json.error }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "false",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2160,
+        384
+      ],
+      "id": "86408f40-94a9-45a7-bd6d-cf5b38575c61",
+      "name": "IF_EmailValido_HU6"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Convierte las filas de locks en un solo item: { locks: [...] }\n\nconst filas = items\n  .map(i => i.json)\n  .filter(r => Object.keys(r).length > 0); // si está vacío, no lo contamos\n\nreturn [\n  {\n    json: {\n      locks: filas // puede ser [] si no hay ninguna fila\n    }\n  }\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        608,
+        480
+      ],
+      "id": "56e22e0d-47af-452d-a5d8-afdb2e9ffa70",
+      "name": "MAP_LocksToArray_HU8"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineAll",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        816,
+        368
+      ],
+      "id": "6c38407c-cf04-4a4f-87bc-72c46230e347",
+      "name": "MERGE_Alumnos_Locks_HU8"
+    },
+    {
+      "parameters": {
+        "jsCode": "// OUT_Respond_Idempotente_HU8 (versión final sin webhook)\n// Devuelve un mensaje limpio indicando que el intento es duplicado.\n// No depende de Webhook → no genera errores de n8n.\n\nreturn items.map(item => ({\n  json: {\n    status: \"idempotente\",\n    message: \"Este intento ya fue procesado previamente. No se realiza ningún envío adicional.\",\n    attempt_id: item.json.attempt_id,\n    alumno_email: item.json.alumno_email,\n    nota: item.json.resultado?.nota ?? null,\n    porcentaje: item.json.resultado?.porcentaje ?? null,\n    detalles: {\n      idempotencia: true,\n      motivo: \"Intento duplicado detectado (HU8)\",\n      timestamp: new Date().toISOString()\n    }\n  }\n}));\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1520,
+        160
+      ],
+      "id": "80e54eb1-83a1-4695-920e-2dd2b27051e6",
+      "name": "OUT_Respond_Idempotente_HU8"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Campos meta que NO son preguntas\nconst META_COLS = new Set([\n  \"Marca temporal\",\n  \"Dirección de correo electrónico\",\n  \"Nombre del alumno\",\n  \"Puntuación\" // si existe\n]);\n\nconst row = $json;\n\n// Derivar nombre y correo\nconst email  = String(row[\"Dirección de correo electrónico\"] || \"\").trim();\nconst nombre = String(row[\"Nombre del alumno\"] || \"\").trim() || \"AlumnoXX\";\nconst marca  = String(row[\"Marca temporal\"] || \"\").trim();\n\n// Obtener todas las claves del row\nconst keys = Object.keys(row);\n\n// Construir arreglo de respuestas P1, P2, ...\nconst respuestas = [];\nlet preguntaIndex = 1;\n\nfor (const key of keys) {\n  if (META_COLS.has(key)) continue; // saltar columnas meta\n\n  const marcada = String(row[key] ?? \"\").trim();\n\n  respuestas.push({\n    pregunta_id: `P${preguntaIndex}`,\n    marcada,\n    enunciado: key\n  });\n\n  preguntaIndex++;\n}\n\n// En modo \"Run Once for Each Item\" se devuelve **un** objeto\nreturn {\n  alumno_nombre: nombre,\n  alumno_email: email,\n  marca_temporal: marca,\n  respuestas\n};\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3152,
+        320
+      ],
+      "id": "88b49141-fe9e-44e3-853d-a56dac6c35e5",
+      "name": "FN_ArmarPayload_Form - HU6.1",
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "jsCode": "function maskName(n) {\n  if (!n) return \"AlumnoXX\";\n  const p = String(n).trim().split(\" \")[0] || \"Alumno\";\n  return p + \"XX\";\n}\n\nfunction maskEmail(e) {\n  const s = String(e || \"\").trim();\n  if (!s.includes(\"@\")) return \"anon@masked\";\n  const [u, d] = s.split(\"@\");\n  const mu =\n    u.length <= 2\n      ? u[0] + \"*\"\n      : u[0] + \"*\".repeat(Math.max(1, u.length - 2)) + u.slice(-1);\n  return `${mu}@${d}`;\n}\n\n// 👇 IMPORTANTE: recorrer TODOS los items de entrada\nreturn items.map(item => {\n  const data = item.json;\n\n  const nombre = String(data.alumno_nombre || \"\").trim();\n  const email  = String(data.alumno_email || \"\").trim();\n  const respuestas = Array.isArray(data.respuestas) ? data.respuestas : [];\n\n  // detectar preguntas omitidas (marcada vacía)\n  const omitidas_ids = respuestas\n    .filter(r => !String(r.marcada || \"\").trim())\n    .map(r => r.pregunta_id);\n\n  const logEntry = {\n    status: \"recepcion_ok\",\n    alumno: maskName(nombre),\n    email: maskEmail(email),\n    respuestas_count: respuestas.length,\n    omitidas_count: omitidas_ids.length,\n    omitidas_ids,\n    at: new Date().toISOString(),\n    via: \"bridge_forms\",\n  };\n\n  return {\n    json: {\n      ...data,\n      __log_masked: logEntry,\n    },\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2928,
+        320
+      ],
+      "id": "8ea212df-ee84-48a5-b4d5-03ddbc069978",
+      "name": "MAP_LogRecepcion_BRIDGE - HU6.1"
+    },
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "documentId": {
+          "__rl": true,
+          "value": "1oMjIYlrSItTyJGzUoRdtafkHNFPPqFk2yuCnl5qAhvM",
+          "mode": "list",
+          "cachedResultName": "Resultados Prueba: para docentes",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1oMjIYlrSItTyJGzUoRdtafkHNFPPqFk2yuCnl5qAhvM/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 177234048,
+          "mode": "list",
+          "cachedResultName": "Respuestas de formulario 1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1oMjIYlrSItTyJGzUoRdtafkHNFPPqFk2yuCnl5qAhvM/edit#gid=177234048"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheetsTrigger",
+      "typeVersion": 1,
+      "position": [
+        -3360,
+        320
+      ],
+      "id": "7cd45c77-f5e3-4fdd-8e30-7f378dcb746b",
+      "name": "Google Sheets Trigger - HU6.1",
+      "credentials": {
+        "googleSheetsTriggerOAuth2Api": {
+          "id": "VXDKNilTXay3096M",
+          "name": "Google Sheets Trigger account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "destinationFieldName": "bk",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        -2064,
+        48
+      ],
+      "id": "0df1630a-5fa7-481b-9030-257739798ef8",
+      "name": "Aggregate - HU3"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineAll",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -1744,
+        176
+      ],
+      "id": "a92a3674-838f-4b9f-90cb-2478b5b3c858",
+      "name": "Merge - HU3"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "ef519eea-ded9-4a8b-a7d9-521d11cfcfa9",
+              "leftValue": "={{$json[\"error\"] && ($json[\"error\"][\"code\"] === \"puntaje_invalido\" || $json[\"error\"][\"code\"] === \"sin_respuestas\") }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -240,
+        176
+      ],
+      "id": "d1f3cf1a-e421-412d-9560-e27470b83832",
+      "name": "If - HU5"
+    },
+    {
+      "parameters": {
+        "jsCode": "// OUT_RespondWebhook_OK (versión decorativa / final del flujo)\n// No responde a ningún Webhook (porque no existe en este flujo).\n// Solo entrega un mensaje final bonito para cada alumno procesado.\n\nreturn items.map(item => {\n  const data = item.json || {};\n  return {\n    json: {\n      status: \"ok\",\n      message: \"Flujo completado exitosamente. Correo enviado y resultado registrado.\",\n      alumno_email: data.alumno_email || null,\n      attempt_id: data.attempt_id || null,\n      timestamp: new Date().toISOString()\n    }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3232,
+        368
+      ],
+      "id": "c403fb20-e1bf-4e03-b15f-9ae2c8b0c3e1",
+      "name": "Finalizacion - HU8"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "API_Webhook_Recepcion - HU1": {
+      "main": [
+        [
+          {
+            "node": "MAP_LogRecepcion - HU1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MAP_LogRecepcion - HU1": {
+      "main": [
+        []
+      ]
+    },
+    "CTRL_NormalizePayload - HU2": {
+      "main": [
+        [
+          {
+            "node": "CTRL_Guard__Valid - HU2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "API_Sheets_BK_Read - HU3": {
+      "main": [
+        [
+          {
+            "node": "MAP_LogBK - HU3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CTRL_CompararRespuestas - HU4": {
+      "main": [
+        [
+          {
+            "node": "MAP_LogComparar - HU4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MAP_LogBK - HU3": {
+      "main": [
+        [
+          {
+            "node": "Aggregate - HU3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MAP_LogComparar - HU4": {
+      "main": [
+        [
+          {
+            "node": "CTRL_CalcularNota - HU5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CTRL_CalcularNota - HU5": {
+      "main": [
+        [
+          {
+            "node": "If - HU5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MAP_LogResultado - HU5": {
+      "main": [
+        [
+          {
+            "node": "CTRL_EstablecerAttempt_HU8",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CTRL_Guard__Valid - HU2": {
+      "main": [
+        [
+          {
+            "node": "Merge - HU3",
+            "type": "main",
+            "index": 1
+          }
+        ],
+        [
+          {
+            "node": "OUT_RespondWebhook_Error_HU2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CTRL_GenerarFeedback_HU6": {
+      "main": [
+        [
+          {
+            "node": "API_SendEmail_HU6",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OUT_LogEnvio_HU6": {
+      "main": [
+        [
+          {
+            "node": "IF_EmailValido_HU6",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "API_Sheets_Write_HU7": {
+      "main": [
+        [
+          {
+            "node": "OUT_LogRegistro_HU7",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CTRL_EstablecerAttempt_HU8": {
+      "main": [
+        [
+          {
+            "node": "API_Sheets_CheckLock_HU8",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "MERGE_Alumnos_Locks_HU8",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CTRL_Idempotencia_HU8": {
+      "main": [
+        [
+          {
+            "node": "IF_Idempotente_HU8",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF_Idempotente_HU8": {
+      "main": [
+        [
+          {
+            "node": "OUT_Respond_Idempotente_HU8",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "CTRL_GenerarFeedback_HU6",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "API_Sheets_CheckLock_HU8": {
+      "main": [
+        [
+          {
+            "node": "MAP_LocksToArray_HU8",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OUT_LogRegistro_HU7": {
+      "main": [
+        [
+          {
+            "node": "API_Sheets_WriteLock_HU8",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "API_Sheets_WriteLock_HU8": {
+      "main": [
+        [
+          {
+            "node": "Finalizacion - HU8",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CTRL_MapTextoALetra_HU4_PRE": {
+      "main": [
+        [
+          {
+            "node": "CTRL_CompararRespuestas - HU4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "API_SendEmail_HU6": {
+      "main": [
+        [
+          {
+            "node": "OUT_LogEnvio_HU6",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF_EmailValido_HU6": {
+      "main": [
+        [
+          {
+            "node": "API_Sheets_Write_HU7",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "OUT_RespondWebhook_Error_HU6",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MAP_LocksToArray_HU8": {
+      "main": [
+        [
+          {
+            "node": "MERGE_Alumnos_Locks_HU8",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "MERGE_Alumnos_Locks_HU8": {
+      "main": [
+        [
+          {
+            "node": "CTRL_Idempotencia_HU8",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OUT_Respond_Idempotente_HU8": {
+      "main": [
+        []
+      ]
+    },
+    "FN_ArmarPayload_Form - HU6.1": {
+      "main": [
+        [
+          {
+            "node": "MAP_LogRecepcion_BRIDGE - HU6.1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MAP_LogRecepcion_BRIDGE - HU6.1": {
+      "main": [
+        [
+          {
+            "node": "API_Sheets_BK_Read - HU3",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "CTRL_NormalizePayload - HU2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Sheets Trigger - HU6.1": {
+      "main": [
+        [
+          {
+            "node": "FN_ArmarPayload_Form - HU6.1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate - HU3": {
+      "main": [
+        [
+          {
+            "node": "Merge - HU3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge - HU3": {
+      "main": [
+        [
+          {
+            "node": "CTRL_MapTextoALetra_HU4_PRE",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If - HU5": {
+      "main": [
+        [
+          {
+            "node": "OUT_RespondWebhook_Error_HU5",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "MAP_LogResultado - HU5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finalizacion - HU8": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "7fcd72ae-0b95-401a-8c0b-ed4e97cc97ef",
+  "meta": {
+    "instanceId": "52020e6536055f243037850b7155c5ca78e4c5d54c959e9719011ec893924076"
+  },
+  "id": "ChhWPRIc2jDOM4rY",
+  "tags": []
+}
