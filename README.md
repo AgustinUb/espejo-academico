@@ -109,8 +109,9 @@ Acceder desde el navegador a: **http://10.40.5.14/**
 - **Contraseña**: [Tu contraseña de Intranet]
 
 ### Credenciales n8n
-- **Email**: sanchopanzapremium321@gmail.com
-- **Contraseña**: Qwerty321
+- **URL**: http://10.40.5.14:5678
+- **Email**: practica1@gmail.com
+- **Contraseña**: Qwerty123
 
 ## 📁 Estructura del Proyecto
 
