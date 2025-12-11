@@ -6,8 +6,8 @@ export function CredentialsBox() {
   const [showPassword, setShowPassword] = useState(true);
 
   const credentials = {
-    usuario: 'practica1@gmail.com',
-    contraseña: 'Qwerty123'
+    usuario: 'espejoacademico@gmail.com',
+    contraseña: 'Flujogrupo8'
   };
 
   const copyToClipboard = (text: string, field: string) => {

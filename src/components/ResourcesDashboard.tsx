@@ -9,44 +9,32 @@ export function ResourcesDashboard() {
     {
       id: 1,
       title: 'Flujo n8n Workflow',
-      description: 'Descarga el archivo de configuración del flujo de n8n para importarlo en tu instancia.',
-      icon: Download,
-      actionText: 'Descargar Flujo',
-      actionType: 'download' as const,
-      link: '/workflow-n8n.json',
-      fileName: 'workflow-n8n.json',
+      description: 'Accede directamente a n8n para visualizar y editar el flujo de trabajo configurado.',
+      icon: ExternalLink,
+      actionText: 'Abrir n8n',
+      actionType: 'external' as const,
+      link: 'http://10.40.5.14:5678/home/workflows',
       color: 'blue'
     },
     {
       id: 2,
-      title: 'Base de Preguntas',
-      description: 'Accede a la hoja de Google Sheets con la base de datos de preguntas para las evaluaciones.',
-      icon: Table,
-      actionText: 'Abrir Hoja',
+      title: 'Formulario de Evaluación',
+      description: 'Accede al formulario de Google Forms para gestionar las evaluaciones de los estudiantes.',
+      icon: FileText,
+      actionText: 'Abrir Formulario',
       actionType: 'external' as const,
-      link: 'https://docs.google.com/spreadsheets/d/1oMjIYlrSItTyJGzUoRdtafkHNFPPqFk2yuCnl5qAhvM/edit?usp=sharing',
+      link: 'https://docs.google.com/forms/d/e/1FAIpQLSeBSUBcMRSN7HA8TyTPUM8aMmUMAMLLsDRTDB4VMVgiMpcnlQ/viewform?pli=1&pli=1',
       color: 'green'
     },
     {
       id: 3,
-      title: 'Resultados de Prueba',
-      description: 'Consulta la hoja con los resultados de las pruebas realizadas por los estudiantes.',
-      icon: FileText,
-      actionText: 'Ver Resultados',
+      title: 'Base de Preguntas y Resultados',
+      description: 'Accede a la hoja de Google Sheets con la base de datos de preguntas y resultados de las evaluaciones.',
+      icon: Table,
+      actionText: 'Abrir Hoja',
       actionType: 'external' as const,
       link: 'https://docs.google.com/spreadsheets/d/1oMjIYlrSItTyJGzUoRdtafkHNFPPqFk2yuCnl5qAhvM/edit?usp=sharing',
       color: 'purple'
-    },
-    {
-      id: 4,
-      title: 'Carpeta N8n RUN',
-      description: 'Descargue el paquete completo de configuración Docker para ejecutar n8n localmente y procesar el archivo de workflow.',
-      icon: Download,
-      actionText: 'Descargar Paquete',
-      actionType: 'download' as const,
-      link: '/n8n-docker-setup.zip',
-      fileName: 'n8n-docker-setup.zip',
-      color: 'blue'
     }
   ];
 
