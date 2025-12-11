@@ -18,16 +18,26 @@ export function ResourcesDashboard() {
     },
     {
       id: 2,
-      title: 'Formulario de Evaluación',
-      description: 'Accede al formulario de Google Forms para gestionar las evaluaciones de los estudiantes.',
+      title: 'Formulario - Responder',
+      description: 'Accede al formulario de Google Forms para que los estudiantes respondan las evaluaciones.',
       icon: FileText,
-      actionText: 'Abrir Formulario',
+      actionText: 'Responder Formulario',
       actionType: 'external' as const,
       link: 'https://docs.google.com/forms/d/e/1FAIpQLSeBSUBcMRSN7HA8TyTPUM8aMmUMAMLLsDRTDB4VMVgiMpcnlQ/viewform?pli=1&pli=1',
       color: 'green'
     },
     {
       id: 3,
+      title: 'Formulario - Editar',
+      description: 'Edita y gestiona el formulario de Google Forms para las evaluaciones de los estudiantes.',
+      icon: FileText,
+      actionText: 'Editar Formulario',
+      actionType: 'external' as const,
+      link: 'https://docs.google.com/forms/d/1Z05qElVniqVCqe8oRO0iLovdLD36FBtOaiWTfkD2JT8/edit',
+      color: 'purple'
+    },
+    {
+      id: 4,
       title: 'Base de Preguntas y Resultados',
       description: 'Accede a la hoja de Google Sheets con la base de datos de preguntas y resultados de las evaluaciones.',
       icon: Table,
