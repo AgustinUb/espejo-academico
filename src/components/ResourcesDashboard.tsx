@@ -73,26 +73,6 @@ export function ResourcesDashboard() {
         ))}
       </div>
 
-      {/* Additional Instructions */}
-      <div className="mt-12 bg-white rounded-xl shadow-md p-6 border border-gray-200">
-        <div className="flex items-start gap-4">
-          <div className="flex-shrink-0">
-            <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
-              <Key className="w-5 h-5 text-blue-600" />
-            </div>
-          </div>
-          <div>
-            <h3 className="text-gray-900 mb-2">Instrucciones de Acceso</h3>
-            <ul className="text-gray-600 space-y-2 list-disc list-inside">
-              <li>Utiliza las credenciales proporcionadas arriba para iniciar sesión en n8n</li>
-              <li>Descarga el flujo de trabajo y importalo en tu instancia de n8n</li>
-              <li>Las hojas de cálculo están sincronizadas en tiempo real</li>
-              <li>Guarda tus credenciales en un lugar seguro</li>
-            </ul>
-          </div>
-        </div>
-      </div>
-
       {/* Modos de Conexión SSH/VPN */}
       <div className="mt-8 space-y-6">
         <h2 className="text-3xl font-bold text-gray-900 text-center mb-6">Modos de Conexión al Servidor</h2>
